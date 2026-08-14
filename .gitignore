@@ -1,0 +1,14 @@
+# 敏感配置文件 (含密码)
+config/remote.conf
+
+# 压缩包
+config/config.zip
+
+# 证书
+config/certs/
+
+# 备份
+backup/
+
+# 日志
+*.log

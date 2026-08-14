@@ -1,0 +1,148 @@
+version: "3.9"
+services:
+  cti:
+    container_name: cti
+    image: mcr.microsoft.com/dotnet/sdk:6.0
+    network_mode: "host"
+    privileged: true
+    restart: always
+    environment:
+      TZ: "Asia/Shanghai"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./config/cti/:/app/
+    logging:
+      options:
+        max-size: "50m"
+    command: dotnet /app/CTIServerFreeSWCore.dll
+  fs:
+    container_name: fs
+    image: registry.cn-hangzhou.aliyuncs.com/integine/fs:1.10.12-amd64
+    network_mode: "host"
+    privileged: true
+    restart: always
+    command: freeswitch -nonat
+    volumes:
+      - ./upload/RecordWav:/service/upload/RecordWav
+      - ./upload/RotbotWav:/service/upload/RotbotWav
+      - ./logs/fs:/usr/local/freeswitch/log
+      - ./config/fs/recordings:/usr/local/freeswitch/recordings
+      - ./config/fs/certs:/usr/local/freeswitch/certs
+      - ./config/fs/conf:/usr/local/freeswitch/conf
+      - ./config/fs/db:/usr/local/freeswitch/db
+      - ./config/fs/grammar:/usr/local/freeswitch/grammar
+      - ./config/fs/scripts:/usr/local/freeswitch/scripts
+      - ./config/fs/sounds:/usr/local/freeswitch/sounds
+    logging:
+      options:
+        max-size: "50m"
+  redis:
+    image: registry.cn-hangzhou.aliyuncs.com/integine/redis:7.2.3
+    container_name: redis
+    privileged: true
+    restart: always
+    ports:
+      - "6379:6379"
+    logging:
+      options:
+        max-size: "50m"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /data/service/redis/datadir:/data
+      - /data/service/redis/conf/redis.conf:/usr/local/etc/redis/redis.conf
+      - /data/service/redis/logs:/logs
+    command: redis-server --requirepass 1qaz@WSX..
+  cc_core:
+    container_name: cc_core
+    image: mcr.microsoft.com/dotnet/sdk:6.0
+    network_mode: "host"
+    privileged: true
+    restart: always
+    working_dir: /app/
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./config/netcore/:/app/
+    logging:
+      options:
+        max-size: "50m"
+    command: dotnet /app/ICRM.API.Entry.dll
+  luahelper:
+    container_name: luahelper
+    image: registry.cn-hangzhou.aliyuncs.com/integine/luahelper:latest-amd64
+    network_mode: "host"
+    privileged: true
+    restart: always
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ./config/luahelper/config.yml:/root/config.yml
+      - ./config/luahelper/luahelper:/root/luaHelper
+      - ./logs/luahelper:/root/logs
+      - ./config/goapi/ivr:/root/ivr
+    logging:
+      options:
+        max-size: "50m"
+  goapi:
+    container_name: goapi
+    image: registry.cn-hangzhou.aliyuncs.com/integine/goapi:latest-amd64
+    network_mode: "host"
+    privileged: true
+    restart: always
+    working_dir: /root/
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./config/goapi/config.json:/root/config.yml
+      - ./config/goapi/phone.dat:/root/phone.dat
+      - ./config/goapi/static:/root/static
+      - ./logs/goapi:/root/logs
+      - ./config/goapi/uploadMusic:/root/uploadMusic
+      - ./config/goapi/ivr:/root/ivr
+    logging:
+      options:
+        max-size: "50m"
+  getcurl:
+    container_name: getcurl
+    image: registry.cn-hangzhou.aliyuncs.com/integine/getcurl:latest-amd64
+    network_mode: "host"
+    privileged: true
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+     - /etc/localtime:/etc/localtime:ro
+     - ./config/getcurl/config.yml:/root/config.yml
+     - ./config/getcurl/getcurl:/root/getcurl
+     - ./logs/getcurl:/root/logs
+    logging:
+     options:
+       max-size: "50m"
+  caddy:
+    container_name: caddy
+    image: registry.cn-hangzhou.aliyuncs.com/integine/caddy:v2.11.3-amd64
+    restart: unless-stopped
+    network_mode: "host"
+    privileged: true
+    volumes:
+      - ./config/h5_layui-webRTC/:/usr/share/nginx/html/h5_layui-webRTC/
+      - ./config/vue/dist/:/usr/share/nginx/html/dist/
+      - ./config/ivrweb/dist:/usr/share/nginx/html/ivrweb
+      - ./upload/RecordWav:/service/upload/RecordWav
+      - ./config/caddy:/etc/caddy
+      - ./config/caddy/cert:/data/config/cert
+      - ./config/caddy/cert:/data/config/cert
+  autotask:
+    container_name: autotask
+    image: mcr.microsoft.com/dotnet/sdk:6.0
+    network_mode: "host"
+    privileged: true
+    restart: always
+    working_dir: /app/
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./config/autotask/:/app/
+    environment:
+      - TZ=Asia/Shanghai
+    command: dotnet /app/AutoDialerServiceCore.dll
+    logging:
+     options:
+       max-size: "50m"
