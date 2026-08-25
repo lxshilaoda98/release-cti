@@ -1,5 +1,17 @@
 version: "3.9"
 services:
+  coturn:
+    image: registry.cn-hangzhou.aliyuncs.com/integine/coturn:latest-amd64
+    container_name: coturn
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./config/coturn/turnserver.conf:/etc/turnserver.conf:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
   cti:
     container_name: cti
     image: mcr.microsoft.com/dotnet/sdk:6.0
