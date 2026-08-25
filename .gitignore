@@ -4,6 +4,9 @@ config/remote.conf
 # 压缩包
 config/config.zip
 
+# 解压出的服务配置 (含密码等敏感信息)
+config/config/
+
 # 证书
 config/certs/
 
