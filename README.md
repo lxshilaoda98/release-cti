@@ -155,6 +155,10 @@ REDIS_PASSWORD="1qaz@WSX.."
 FS_HOST="127.0.0.1"
 FS_PORT="8021"
 FS_PASSWORD="1qaz@WSX.."
+
+# VIP (Keepalived 高可用, 留空 = 单机不使用)
+# 配置后 FreeSWITCH 的 domain/rtp-ip/sip-ip 绑定到 VIP
+VIP=""
 ```
 
 **自动更新的配置文件：**
@@ -169,6 +173,8 @@ FS_PASSWORD="1qaz@WSX.."
 | `getcurl/config.yml` | 数据库 + ESL + Redis |
 | `luahelper/config.yml` | 数据库 + ESL |
 | `fs/.../event_socket.conf.xml` | ESL 端口 + 密码 |
+| `fs/conf/vars.xml` | `domain` / `domain_name` → VIP（VIP 非空时） |
+| `fs/conf/sip_profiles/external.xml` `internal.xml` | `rtp-ip` / `sip-ip` / `ext-rtp-ip` / `ext-sip-ip` → VIP（VIP 非空时） |
 | `docker-compose.yml` | Redis 密码 |
 
 ### Compose 服务管理 (`deploy-compose.sh`)

@@ -1011,6 +1011,8 @@ menu_update_config() {
     printf "    %-20s %s\n" "FS ESL 端口" "$FS_PORT"
     printf "    %-20s %s\n" "FS ESL 密码" "********"
     print_line
+    printf "    %-20s %s\n" "VIP 地址" "${VIP:-未配置}"
+    print_line
     echo ""
 
     echo -e "  请选择操作:"

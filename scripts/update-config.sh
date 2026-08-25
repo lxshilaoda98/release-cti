@@ -105,6 +105,8 @@ load_config() {
     printf "    %-20s %s\n" "FS ESL 端口" "$FS_PORT"
     printf "    %-20s %s\n" "FS ESL 密码" "********"
     print_line
+    printf "    %-20s %s\n" "VIP 地址" "${VIP:-未配置 (跳过 FreeSWITCH VIP 修改)}"
+    print_line
     echo ""
 }
 
@@ -411,6 +413,60 @@ update_fs_esl() {
     log_ok "fs event_socket.conf.xml 已更新"
 }
 
+# ============================ 更新 FreeSWITCH VIP 绑定 ============================
+# VIP 非空时, 将 FS 的 domain / rtp-ip / sip-ip 绑定到 VIP 地址 (Keepalived 高可用场景)
+update_fs_vip() {
+    local vip="${VIP:-}"
+
+    if [[ -z "$vip" ]]; then
+        log_info "VIP 未配置，跳过 FreeSWITCH VIP 绑定修改"
+        return 0
+    fi
+
+    # IPv4 格式校验
+    if ! [[ "$vip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        log_error "VIP 格式不正确: ${vip} (应为 IPv4 地址，如 10.160.4.88)"
+        exit 1
+    fi
+
+    log_step "更新 FreeSWITCH VIP 绑定 (${vip})"
+
+    # --- vars.xml: domain / domain_name ---
+    local vars_file="${CONFIG_DIR}/fs/conf/vars.xml"
+    if [[ ! -f "$vars_file" ]]; then
+        log_warn "跳过: $vars_file 不存在"
+    else
+        log_info "更新 fs/conf/vars.xml (domain, domain_name) ..."
+        cp "$vars_file" "${vars_file}.bak.$(date +%Y%m%d%H%M%S)"
+
+        # 注意: data="domain= 不会误匹配 data="domain_name= (domain 后是 _ 不是 =)
+        sed -i "s|data=\"domain=[^\"]*\"|data=\"domain=${vip}\"|g" "$vars_file"
+        sed -i "s|data=\"domain_name=[^\"]*\"|data=\"domain_name=${vip}\"|g" "$vars_file"
+
+        log_ok "fs/conf/vars.xml 已更新"
+    fi
+
+    # --- sip_profiles: external.xml / internal.xml ---
+    local profile
+    for profile in external internal; do
+        local file="${CONFIG_DIR}/fs/conf/sip_profiles/${profile}.xml"
+        if [[ ! -f "$file" ]]; then
+            log_warn "跳过: $file 不存在"
+            continue
+        fi
+
+        log_info "更新 fs/conf/sip_profiles/${profile}.xml (rtp-ip, sip-ip, ext-rtp-ip, ext-sip-ip) ..."
+        cp "$file" "${file}.bak.$(date +%Y%m%d%H%M%S)"
+
+        sed -i "s|<param name=\"rtp-ip\" value=\"[^\"]*\"/>|<param name=\"rtp-ip\" value=\"${vip}\"/>|g" "$file"
+        sed -i "s|<param name=\"sip-ip\" value=\"[^\"]*\"/>|<param name=\"sip-ip\" value=\"${vip}\"/>|g" "$file"
+        sed -i "s|<param name=\"ext-rtp-ip\" value=\"[^\"]*\"/>|<param name=\"ext-rtp-ip\" value=\"${vip}\"/>|g" "$file"
+        sed -i "s|<param name=\"ext-sip-ip\" value=\"[^\"]*\"/>|<param name=\"ext-sip-ip\" value=\"${vip}\"/>|g" "$file"
+
+        log_ok "fs/conf/sip_profiles/${profile}.xml 已更新"
+    done
+}
+
 # ============================ 更新 Caddyfile ============================
 update_caddyfile() {
     local caddyfile="${CONFIG_DIR}/caddy/Caddyfile"
@@ -475,6 +531,7 @@ main() {
     update_getcurl
     update_luahelper
     update_fs_esl
+    update_fs_vip
     update_caddyfile
     update_compose_redis
 
@@ -489,9 +546,8 @@ main() {
     echo "    getcurl/config.yml              (数据库 + ESL + Redis)"
     echo "    luahelper/config.yml            (数据库 + ESL)"
     echo "    fs/.../event_socket.conf.xml     (ESL 端口 + 密码)"
+    echo "    fs/conf/vars.xml + sip_profiles  (VIP 绑定, VIP 非空时)"
     echo "    caddy/Caddyfile                 (HTTP 模式, 有证书时跳过)"
-    echo "    docker-compose.yml              (Redis 密码)"
-    echo "    fs/.../event_socket.conf.xml     (ESL 端口 + 密码)"
     echo "    docker-compose.yml              (Redis 密码)"
     echo ""
     log_info "原文件已备份为 .bak.<timestamp>"
