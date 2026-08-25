@@ -200,6 +200,9 @@ install_online() {
 install_offline() {
     log_step "离线安装 Keepalived"
 
+    # 自动回退到离线包 bundle 目录
+    PKG_DIR=$(resolve_pkg_dir "$PKG_DIR")
+
     if [[ ! -d "$PKG_DIR" ]]; then
         log_error "离线包目录不存在: $PKG_DIR"
         exit 1

@@ -109,7 +109,7 @@ REMOTE_DIR="/data/deploy"
 | 模式 | 说明 |
 |------|------|
 | 在线安装 | 华为云 apt 源 + 阿里云 Docker CE 源 |
-| 离线安装 | 从本地 .deb 包安装 (默认 `/data/images`) |
+| 离线安装 | 从本地 .deb 包安装 (默认 `/data/images`，自动回退 `/data/offline-bundle/packages`) |
 
 - 自动配置 `daemon.json`（日志限制、data-root、镜像加速器）
 - 镜像加速器：USTC + DaoCloud

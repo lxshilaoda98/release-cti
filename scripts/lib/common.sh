@@ -180,6 +180,29 @@ read_choice() {
     done
 }
 
+# ============================ 离线包目录解析 ============================
+# 若指定目录不存在或没有 .deb 包, 自动回退到离线包 bundle 目录
+# 参数: $1 = 当前包目录
+# 输出: 有效的包目录 (stdout); 都找不到时原样返回 (由调用方报错)
+resolve_pkg_dir() {
+    local pkg_dir="$1"
+    local fallback="/data/offline-bundle/packages"
+
+    if [[ -d "$pkg_dir" ]] && find "$pkg_dir" -maxdepth 1 -name '*.deb' -type f 2>/dev/null | grep -q .; then
+        echo "$pkg_dir"
+        return 0
+    fi
+
+    if [[ -d "$fallback" ]] && find "$fallback" -maxdepth 1 -name '*.deb' -type f 2>/dev/null | grep -q .; then
+        # 日志输出到 stderr, 避免被 $() 捕获污染返回值
+        log_info "${pkg_dir} 中无 .deb 包，自动使用离线包目录: ${fallback}" >&2
+        echo "$fallback"
+        return 0
+    fi
+
+    echo "$pkg_dir"
+}
+
 # ============================ 部署前备份 ============================
 # 参数: $1 = 备份内容标签 (如 before-docker-install)
 #       $2 = 额外要备份的文件/目录列表 (可选)

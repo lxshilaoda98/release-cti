@@ -12,7 +12,7 @@
 #
 # 可选参数:
 #   --data-root  DIR    Docker 数据目录        (默认 /data/dockerdata)
-#   --pkg-dir    DIR    离线 .deb 包目录       (默认 /data/images)
+#   --pkg-dir    DIR    离线 .deb 包目录       (默认 /data/images, 无 .deb 时自动回退 /data/offline-bundle/packages)
 #   --apt-mirror URL    Ubuntu apt 镜像源      (默认 https://repo.huaweicloud.com/ubuntu)
 #   --skip-apt-mirror   跳过 apt 源更换
 #
@@ -215,6 +215,9 @@ install_docker_online() {
 # ============================ 离线：安装 Docker CE ============================
 install_docker_offline() {
     log_step "离线安装 Docker CE"
+
+    # 自动回退到离线包 bundle 目录
+    PKG_DIR=$(resolve_pkg_dir "$PKG_DIR")
 
     # 检查离线包目录
     if [[ ! -d "$PKG_DIR" ]]; then
