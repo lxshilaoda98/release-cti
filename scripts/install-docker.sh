@@ -124,13 +124,8 @@ setup_apt_mirror() {
     local sources_d="/etc/apt/sources.list.d"
     local old_sources="/etc/apt/sources.list"
 
-    # 备份
-    local backup_ts
-    backup_ts=$(date +%Y%m%d%H%M%S)
-
     if [[ -f "${sources_d}/ubuntu.sources" ]]; then
-        cp "${sources_d}/ubuntu.sources" "${sources_d}/ubuntu.sources.bak.${backup_ts}"
-        log_info "已备份 ubuntu.sources -> ubuntu.sources.bak.${backup_ts}"
+        backup_file "${sources_d}/ubuntu.sources"
 
         # 写入华为云镜像源 (DEB822 格式)
         cat > "${sources_d}/ubuntu.sources" << EOF
@@ -150,8 +145,7 @@ EOF
 
     elif [[ -f "$old_sources" ]]; then
         # 旧版格式 (Ubuntu 22.04)
-        cp "$old_sources" "${old_sources}.bak.${backup_ts}"
-        log_info "已备份 sources.list -> sources.list.bak.${backup_ts}"
+        backup_file "$old_sources"
 
         cat > "$old_sources" << EOF
 deb ${APT_MIRROR} ${codename} main restricted universe multiverse
@@ -240,12 +234,10 @@ install_docker_offline() {
         echo "    $(basename "$f")"
     done
 
-    # 安装所有 .deb 包 (dpkg 会自动处理依赖顺序)
+    # 安装所有 .deb 包 (多轮 dpkg 处理依赖顺序)
     log_info "安装 .deb 包 ..."
-    if ! dpkg -i $(find "$PKG_DIR" -name '*.deb' -type f | sort) 2>/dev/null; then
-        log_warn "dpkg 报告依赖问题，尝试 apt 修复 ..."
-        apt-get install -f -y -qq
-    fi
+    dpkg_install_debs $(find "$PKG_DIR" -name '*.deb' -type f | sort)
+    apt-get install -f -y -qq 2>/dev/null || true
     log_info ".deb 包安装完成"
 
     # 如果有独立的 docker-compose 二进制文件，安装为兜底
@@ -266,17 +258,12 @@ setup_daemon_json() {
     log_step "配置 Docker daemon.json"
 
     local daemon_json="/etc/docker/daemon.json"
-    local backup_ts
-    backup_ts=$(date +%Y%m%d%H%M%S)
 
     # 创建配置目录
     mkdir -p /etc/docker
 
     # 备份已有配置
-    if [[ -f "$daemon_json" ]]; then
-        cp "$daemon_json" "${daemon_json}.bak.${backup_ts}"
-        log_info "已备份 daemon.json -> daemon.json.bak.${backup_ts}"
-    fi
+    backup_file "$daemon_json"
 
     # 构建 registry-mirrors JSON 数组
     local mirrors_json

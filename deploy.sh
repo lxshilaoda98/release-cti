@@ -9,9 +9,9 @@
 #
 # 功能模块:
 #   [1] 一键全量部署
-#   [2] 环境安装    (Docker / Keepalived / 自签证书)
+#   [2] 环境安装    (Docker / Keepalived / 自签证书 / chrony / 内核调优 / fail2ban)
 #   [3] 服务部署    (Docker Compose 部署 / 修改服务配置)
-#   [4] 运维工具    (离线包准备 / 卸载管理 / sipmon / sngrep)
+#   [4] 运维工具    (离线包准备 / 卸载管理 / sipmon / sngrep / 运维工具包)
 #
 # 远程模式通过跳板机 SSH 连接目标服务器，自动推送脚本并执行。
 # 连接配置见 config/remote.conf
@@ -133,6 +133,44 @@ check_sngrep() {
     fi
 }
 
+# 状态检测: chrony 时间同步
+check_chrony() {
+    if command -v chronyd &>/dev/null && systemctl is-active chrony &>/dev/null 2>&1; then
+        echo -e "${GREEN}✓ 已安装 (运行中)${NC}"
+    elif command -v chronyd &>/dev/null; then
+        echo -e "${YELLOW}~ 已安装 (未运行)${NC}"
+    else
+        echo -e "${RED}✗ 未安装${NC}"
+    fi
+}
+
+# 状态检测: fail2ban
+check_fail2ban() {
+    if command -v fail2ban-client &>/dev/null && systemctl is-active fail2ban &>/dev/null 2>&1; then
+        echo -e "${GREEN}✓ 已安装 (运行中)${NC}"
+    elif command -v fail2ban-client &>/dev/null; then
+        echo -e "${YELLOW}~ 已安装 (未运行)${NC}"
+    else
+        echo -e "${RED}✗ 未安装${NC}"
+    fi
+}
+
+# 状态检测: 运维工具包
+check_tools() {
+    local tools=(sip-tester sipsak mtr iftop nethogs lnav jq htop iotop)
+    local installed=0 t
+    for t in "${tools[@]}"; do
+        dpkg -s "$t" &>/dev/null 2>&1 && installed=$((installed + 1))
+    done
+    if [[ $installed -eq ${#tools[@]} ]]; then
+        echo -e "${GREEN}✓ 已安装 (${installed}/${#tools[@]})${NC}"
+    elif [[ $installed -gt 0 ]]; then
+        echo -e "${YELLOW}~ 部分安装 (${installed}/${#tools[@]})${NC}"
+    else
+        echo -e "${RED}✗ 未安装${NC}"
+    fi
+}
+
 # 确认提示: 传参为提示语, 返回 0=是 1=否
 confirm() {
     local prompt="$1"
@@ -237,9 +275,9 @@ main_menu() {
         echo -e "  ${BOLD}请选择要执行的操作:${NC}"
         echo ""
         echo -e "    ${CYAN}[1]${NC}  一键全量部署    ${DIM}(按顺序执行全部部署步骤)${NC}"
-        echo -e "    ${CYAN}[2]${NC}  环境安装        ${DIM}(Docker / Keepalived / 证书)${NC}"
+        echo -e "    ${CYAN}[2]${NC}  环境安装        ${DIM}(Docker / Keepalived / 证书 / chrony / 调优 / fail2ban)${NC}"
         echo -e "    ${CYAN}[3]${NC}  服务部署        ${DIM}(Compose 部署 / 修改服务配置)${NC}"
-        echo -e "    ${CYAN}[4]${NC}  运维工具        ${DIM}(离线包准备 / 卸载管理 / sipmon / sngrep)${NC}"
+        echo -e "    ${CYAN}[4]${NC}  运维工具        ${DIM}(离线包准备 / 卸载管理 / 抓包工具 / 工具包)${NC}"
         echo ""
         echo -e "    ${DIM}[0] 退出 / [ESC] 返回${NC}"
         echo ""
@@ -276,6 +314,9 @@ menu_env_install() {
         echo -e "    ${CYAN}[1]${NC}  Docker 安装            ${DIM}(在线/离线安装 Docker CE + Compose)${NC}"
         echo -e "    ${CYAN}[2]${NC}  Keepalived 安装        ${DIM}(标准/CTI 模式 HA 配置)${NC}"
         echo -e "    ${CYAN}[3]${NC}  自签证书生成          ${DIM}(使用已有证书 / 生成自签 IP 证书)${NC}"
+        echo -e "    ${CYAN}[4]${NC}  时间同步 (chrony)      ${DIM}(在线/离线安装 + 国内 NTP 源)${NC}"
+        echo -e "    ${CYAN}[5]${NC}  内核参数调优          ${DIM}(conntrack / UDP buffer / 句柄数)${NC}"
+        echo -e "    ${CYAN}[6]${NC}  fail2ban 安全防护      ${DIM}(SSH + SIP 防暴力破解)${NC}"
         echo ""
         echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
         echo ""
@@ -287,8 +328,149 @@ menu_env_install() {
             1) menu_docker ;;
             2) menu_keepalived ;;
             3) menu_cert ;;
+            4) menu_chrony ;;
+            5) menu_sysctl ;;
+            6) menu_fail2ban ;;
             0) return ;;
             *) log_warn "无效输入，请重新选择"; sleep 1 ;;
+        esac
+    done
+}
+
+# ============================ 三级菜单: 时间同步 (chrony) ============================
+menu_chrony() {
+    while true; do
+        print_header
+        echo -e "  ${BOLD}环境安装 > 时间同步 (chrony)${NC}"
+        echo -e "  ${DIM}当前状态:$(check_chrony)${NC}"
+        echo -e "  ${DIM}国内 NTP 源 (阿里/腾讯/清华) + 内网 local 兜底${NC}"
+        print_line
+        echo ""
+        echo -e "  请选择操作:"
+        echo ""
+        echo -e "    ${CYAN}[1]${NC}  在线安装    ${DIM}(apt 安装 chrony + 配置 NTP 源)${NC}"
+        echo -e "    ${CYAN}[2]${NC}  离线安装    ${DIM}(从本地 .deb 包安装)${NC}"
+        echo -e "    ${CYAN}[3]${NC}  卸载        ${DIM}(apt remove chrony)${NC}"
+        echo -e "    ${CYAN}[4]${NC}  查看状态    ${DIM}(时间源 / 偏移量 / 同步状态)${NC}"
+        echo ""
+        echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
+        echo ""
+
+        read_choice "请输入序号: " ""
+        choice="$REPLY"
+
+        case "$choice" in
+            1)
+                echo ""
+                if confirm "确认在线安装并配置 chrony？"; then
+                    bash "${SCRIPTS_DIR}/install-chrony.sh" --online
+                    pause_enter
+                fi
+                return
+                ;;
+            2)
+                echo ""
+                if confirm "确认离线安装并配置 chrony？"; then
+                    bash "${SCRIPTS_DIR}/install-chrony.sh" --offline
+                    pause_enter
+                fi
+                return
+                ;;
+            3)
+                echo ""
+                if confirm "确认卸载 chrony？"; then
+                    bash "${SCRIPTS_DIR}/install-chrony.sh" --uninstall
+                    pause_enter
+                fi
+                return
+                ;;
+            4)
+                echo ""
+                bash "${SCRIPTS_DIR}/install-chrony.sh" --status
+                pause_enter
+                return
+                ;;
+            0) return ;;
+            *) log_warn "无效输入"; sleep 1 ;;
+        esac
+    done
+}
+
+# ============================ 三级菜单: 内核参数调优 ============================
+menu_sysctl() {
+    print_header
+    echo -e "  ${BOLD}环境安装 > 内核参数调优${NC}"
+    echo -e "  ${DIM}nf_conntrack 表 / UDP buffer / somaxconn / 文件句柄${NC}"
+    print_line
+    echo ""
+
+    # 先展示当前状态
+    bash "${SCRIPTS_DIR}/tune-sysctl.sh" --status
+    echo ""
+
+    if confirm "确认应用以上推荐值？(原配置自动备份到 /data/backup)"; then
+        echo ""
+        bash "${SCRIPTS_DIR}/tune-sysctl.sh" --apply
+    fi
+    pause_enter
+    return
+}
+
+# ============================ 三级菜单: fail2ban 安全防护 ============================
+menu_fail2ban() {
+    while true; do
+        print_header
+        echo -e "  ${BOLD}环境安装 > fail2ban 安全防护${NC}"
+        echo -e "  ${DIM}当前状态:$(check_fail2ban)${NC}"
+        echo -e "  ${DIM}SSH 防爆破 + FreeSWITCH SIP 认证失败封禁${NC}"
+        print_line
+        echo ""
+        echo -e "  请选择操作:"
+        echo ""
+        echo -e "    ${CYAN}[1]${NC}  在线安装    ${DIM}(apt 安装 fail2ban + 配置 jail)${NC}"
+        echo -e "    ${CYAN}[2]${NC}  离线安装    ${DIM}(从本地 .deb 包安装)${NC}"
+        echo -e "    ${CYAN}[3]${NC}  卸载        ${DIM}(apt remove fail2ban)${NC}"
+        echo -e "    ${CYAN}[4]${NC}  查看状态    ${DIM}(运行状态 / 各 jail 封禁统计)${NC}"
+        echo ""
+        echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
+        echo ""
+
+        read_choice "请输入序号: " ""
+        choice="$REPLY"
+
+        case "$choice" in
+            1)
+                echo ""
+                if confirm "确认在线安装并配置 fail2ban？"; then
+                    bash "${SCRIPTS_DIR}/install-fail2ban.sh" --online
+                    pause_enter
+                fi
+                return
+                ;;
+            2)
+                echo ""
+                if confirm "确认离线安装并配置 fail2ban？"; then
+                    bash "${SCRIPTS_DIR}/install-fail2ban.sh" --offline
+                    pause_enter
+                fi
+                return
+                ;;
+            3)
+                echo ""
+                if confirm "确认卸载 fail2ban？"; then
+                    bash "${SCRIPTS_DIR}/install-fail2ban.sh" --uninstall
+                    pause_enter
+                fi
+                return
+                ;;
+            4)
+                echo ""
+                bash "${SCRIPTS_DIR}/install-fail2ban.sh" --status
+                pause_enter
+                return
+                ;;
+            0) return ;;
+            *) log_warn "无效输入"; sleep 1 ;;
         esac
     done
 }
@@ -334,6 +516,7 @@ menu_ops_tools() {
         echo -e "    ${CYAN}[2]${NC}  卸载管理              ${DIM}(分组件卸载 / 一键全部卸载)${NC}"
         echo -e "    ${CYAN}[3]${NC}  SIP 抓包工具 (sipmon)  ${DIM}(在线/离线安装)${NC}"
         echo -e "    ${CYAN}[4]${NC}  SIP 抓包工具 (sngrep)  ${DIM}(在线/离线安装)${NC}"
+        echo -e "    ${CYAN}[5]${NC}  常用运维工具包        ${DIM}(sipp/mtr/iftop/lnav/jq/htop 等)${NC}"
         echo ""
         echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
         echo ""
@@ -346,6 +529,7 @@ menu_ops_tools() {
             2) menu_uninstall ;;
             3) menu_sipmon ;;
             4) menu_sngrep ;;
+            5) menu_tools ;;
             0) return ;;
             *) log_warn "无效输入，请重新选择"; sleep 1 ;;
         esac
@@ -520,7 +704,7 @@ menu_compose() {
         echo ""
         echo -e "    ${CYAN}[1]${NC}  服务管理    ${DIM}(启动 / 停止 / 重启)${NC}"
         echo -e "    ${CYAN}[2]${NC}  状态查看    ${DIM}(状态 / 日志 / 健康检查)${NC}"
-        echo -e "    ${CYAN}[3]${NC}  手动操作    ${DIM}(初始化模板 / 拉取镜像 / 解压配置)${NC}"
+        echo -e "    ${CYAN}[3]${NC}  手动操作    ${DIM}(初始化模板 / 拉取镜像 / 加载离线镜像 / 解压配置)${NC}"
         echo ""
         echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
         echo ""
@@ -562,9 +746,16 @@ menu_compose_service() {
         case "$choice" in
             1)
                 echo ""
+                echo -e "  请选择部署模式:"
+                echo -e "    ${CYAN}[1]${NC}  在线    ${DIM}(镜像缺失时自动拉取)${NC}"
+                echo -e "    ${CYAN}[2]${NC}  离线    ${DIM}(从 /data/offline-bundle/images 加载镜像)${NC}"
+                read_choice "请输入序号 [默认 1]: " "1"
+                local up_args="--up"
+                [[ "$REPLY" == "2" ]] && up_args="--up --offline"
+                echo ""
                 if confirm "确认部署/启动服务？"; then
                     if [[ -f "${SCRIPTS_DIR}/deploy-compose.sh" ]]; then
-                        bash "${SCRIPTS_DIR}/deploy-compose.sh" --up
+                        bash "${SCRIPTS_DIR}/deploy-compose.sh" $up_args
                     else
                         log_warn "deploy-compose.sh 尚未实现"
                     fi
@@ -666,7 +857,8 @@ menu_compose_manual() {
         echo ""
         echo -e "    ${CYAN}[1]${NC}  初始化模板    ${DIM}(从模板生成 docker-compose.yml)${NC}"
         echo -e "    ${CYAN}[2]${NC}  拉取镜像      ${DIM}(docker compose pull)${NC}"
-        echo -e "    ${CYAN}[3]${NC}  解压配置文件  ${DIM}(解压 config.zip 到 /data/config)${NC}"
+        echo -e "    ${CYAN}[3]${NC}  加载离线镜像  ${DIM}(docker load, 从 /data/offline-bundle/images)${NC}"
+        echo -e "    ${CYAN}[4]${NC}  解压配置文件  ${DIM}(解压 config.zip 到 /data/config)${NC}"
         echo ""
         echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
         echo ""
@@ -690,6 +882,14 @@ menu_compose_manual() {
                 return
                 ;;
             3)
+                echo ""
+                if confirm "确认从 /data/offline-bundle/images 加载离线镜像？"; then
+                    bash "${SCRIPTS_DIR}/deploy-compose.sh" --load
+                    pause_enter
+                fi
+                return
+                ;;
+            4)
                 echo ""
                 if confirm "确认解压 config.zip 到 /data/config？"; then
                     bash "${SCRIPTS_DIR}/deploy-compose.sh" --extract-config
@@ -774,7 +974,9 @@ menu_full_deploy() {
     log_info "步骤 4/5: Docker Compose 部署"
     print_line
     if [[ -f "${SCRIPTS_DIR}/deploy-compose.sh" ]]; then
-        bash "${SCRIPTS_DIR}/deploy-compose.sh" --up
+        local up_args="--up"
+        [[ "$mode_flag" == "--offline" ]] && up_args="--up --offline"
+        bash "${SCRIPTS_DIR}/deploy-compose.sh" $up_args
     else
         log_warn "deploy-compose.sh 尚未实现，跳过"
     fi
@@ -1177,6 +1379,66 @@ menu_sngrep() {
     done
 }
 
+# ============================ 常用运维工具包子菜单 ============================
+menu_tools() {
+    while true; do
+        print_header
+        echo -e "  ${BOLD}常用运维工具包${NC}"
+        echo -e "  ${DIM}当前状态:$(check_tools)${NC}"
+        echo -e "  ${DIM}sipp(SIP压测) sipsak(SIP探测) mtr(路由诊断) iftop(带宽)${NC}"
+        echo -e "  ${DIM}nethogs(进程流量) lnav(日志浏览) jq(JSON) htop(监控) iotop(IO)${NC}"
+        print_line
+        echo ""
+        echo -e "  请选择操作:"
+        echo ""
+        echo -e "    ${CYAN}[1]${NC}  在线安装    ${DIM}(apt 安装全部工具)${NC}"
+        echo -e "    ${CYAN}[2]${NC}  离线安装    ${DIM}(从本地 .deb 包安装)${NC}"
+        echo -e "    ${CYAN}[3]${NC}  卸载        ${DIM}(apt remove 全部工具)${NC}"
+        echo -e "    ${CYAN}[4]${NC}  查看状态    ${DIM}(逐个显示安装状态)${NC}"
+        echo ""
+        echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
+        echo ""
+
+        read_choice "请输入序号: " ""
+        choice="$REPLY"
+
+        case "$choice" in
+            1)
+                echo ""
+                if confirm "确认在线安装运维工具包？"; then
+                    bash "${SCRIPTS_DIR}/install-tools.sh" --online
+                    pause_enter
+                fi
+                return
+                ;;
+            2)
+                echo ""
+                if confirm "确认离线安装运维工具包？"; then
+                    bash "${SCRIPTS_DIR}/install-tools.sh" --offline
+                    pause_enter
+                fi
+                return
+                ;;
+            3)
+                echo ""
+                if confirm "确认卸载全部运维工具？"; then
+                    bash "${SCRIPTS_DIR}/install-tools.sh" --uninstall
+                    pause_enter
+                fi
+                return
+                ;;
+            4)
+                echo ""
+                bash "${SCRIPTS_DIR}/install-tools.sh" --status
+                pause_enter
+                return
+                ;;
+            0) return ;;
+            *) log_warn "无效输入"; sleep 1 ;;
+        esac
+    done
+}
+
 # ============================ 离线包准备子菜单 ============================
 menu_offline_prepare() {
     print_header
@@ -1188,6 +1450,7 @@ menu_offline_prepare() {
     echo -e "    ${DIM}- Docker CE 全套 .deb 包 (含依赖)${NC}"
     echo -e "    ${DIM}- Keepalived .deb 包${NC}"
     echo -e "    ${DIM}- sngrep .deb 包 (含依赖)${NC}"
+    echo -e "    ${DIM}- 运维工具包 .deb (sipp/mtr/iftop/lnav/jq 等)${NC}"
     echo -e "    ${DIM}- Docker 镜像 (docker save 导出)${NC}"
     echo -e "    ${DIM}- sipmon 抓包工具静态二进制${NC}"
     echo -e "    ${DIM}- daemon.json 模板${NC}"

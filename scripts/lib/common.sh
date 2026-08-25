@@ -180,6 +180,59 @@ read_choice() {
     done
 }
 
+# ============================ 单文件备份 ============================
+# 备份单个文件到 /data/backup/<时间戳>-files/<原始路径> (保留目录结构)
+# 同一次运行内多次调用进入同一目录; 不在原文件旁生成 .bak 文件
+_BACKUP_TS=""
+
+backup_file() {
+    local src="$1"
+    [[ -f "$src" ]] || return 0
+
+    if [[ -z "$_BACKUP_TS" ]]; then
+        _BACKUP_TS=$(date +%Y%m%d-%H%M%S)
+    fi
+
+    local dest="${BACKUP_BASE}/${_BACKUP_TS}-files${src}"
+    mkdir -p "$(dirname "$dest")"
+    cp "$src" "$dest"
+    log_info "已备份: ${src} -> ${dest}"
+}
+
+# ============================ dpkg 批量安装 ============================
+# 多轮 dpkg -i 直到收敛: 解决 Pre-Depends 要求前置包"已配置"的顺序问题
+# (如 python3-minimal Pre-Depends python3.12-minimal, 单批次按字母序必然失败)
+# 参数: $@ = .deb 文件列表
+dpkg_install_debs() {
+    [[ $# -eq 0 ]] && return 0
+
+    local pass
+    for pass in 1 2 3; do
+        dpkg -i "$@" > /dev/null 2>&1 || true
+        dpkg --configure -a > /dev/null 2>&1 || true
+    done
+    return 0
+}
+
+# ============================ apt universe 仓库 ============================
+# 确保 Ubuntu universe 仓库已启用 (sipp/lnav 等工具在 universe)
+apt_ensure_universe() {
+    grep -qiE 'ubuntu' /etc/os-release 2>/dev/null || return 0
+
+    local sources_d="/etc/apt/sources.list.d"
+    if [[ -f "${sources_d}/ubuntu.sources" ]]; then
+        # DEB822 格式 (Ubuntu 24.04+)
+        if ! grep -q "universe" "${sources_d}/ubuntu.sources"; then
+            log_info "启用 universe 仓库 ..."
+            sed -i 's/Components: main/Components: main universe/' "${sources_d}/ubuntu.sources"
+        fi
+    elif [[ -f /etc/apt/sources.list ]] && ! grep -qE "^deb .*universe" /etc/apt/sources.list; then
+        # 旧版格式 (Ubuntu 22.04)
+        log_info "启用 universe 仓库 ..."
+        sed -i -E 's|^(deb +[^ ]+ +[^ ]+) +main|\1 main universe|' /etc/apt/sources.list
+    fi
+}
+
 # ============================ 离线包目录解析 ============================
 # 若指定目录不存在或没有 .deb 包, 自动回退到离线包 bundle 目录
 # 参数: $1 = 当前包目录

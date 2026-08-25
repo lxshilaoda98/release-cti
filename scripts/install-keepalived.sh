@@ -225,10 +225,8 @@ install_offline() {
     all_debs=$(find "$PKG_DIR" -name '*.deb' -type f 2>/dev/null | sort)
 
     log_info "安装 .deb 包 ..."
-    if ! dpkg -i $all_debs 2>/dev/null; then
-        log_warn "dpkg 报告依赖问题，尝试 apt 修复 ..."
-        apt-get install -f -y -qq 2>/dev/null || true
-    fi
+    dpkg_install_debs $all_debs
+    apt-get install -f -y -qq 2>/dev/null || true
     log_info "Keepalived 离线安装完成"
 }
 
@@ -521,13 +519,7 @@ NOTIFY_EOF
 generate_config() {
     log_step "生成 keepalived.conf"
 
-    local backup_ts
-    backup_ts=$(date +%Y%m%d%H%M%S)
-
-    if [[ -f "$KEEPALIVED_CONF" ]]; then
-        cp "$KEEPALIVED_CONF" "${KEEPALIVED_CONF}.bak.${backup_ts}"
-        log_info "已备份 keepalived.conf -> keepalived.conf.bak.${backup_ts}"
-    fi
+    backup_file "$KEEPALIVED_CONF"
 
     mkdir -p /etc/keepalived
 

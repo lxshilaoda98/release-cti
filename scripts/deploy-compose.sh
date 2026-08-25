@@ -285,8 +285,8 @@ check_prerequisites() {
     # 2. 检查 docker-compose.yml
     [[ -f "$COMPOSE_FILE" ]] && has_compose=true
 
-    # 3. 检查配置是否已应用 (update-config.sh 会生成 .bak 文件)
-    if ls /data/config/cti/appsettings.json.bak.* &>/dev/null 2>&1; then
+    # 3. 检查配置是否已应用 (update-config.sh 完成后会生成标记文件)
+    if [[ -f /data/config/.deploy-conf-applied ]]; then
         has_conf_applied=true
     fi
 

@@ -195,10 +195,7 @@ generate_wss_pem() {
     local wss_pem="${FS_CERT_DIR}/wss.pem"
 
     # 备份已有 wss.pem
-    if [[ -f "$wss_pem" ]]; then
-        cp "$wss_pem" "${wss_pem}.bak.$(date +%Y%m%d%H%M%S)"
-        log_info "已备份 wss.pem"
-    fi
+    backup_file "$wss_pem"
 
     # wss.pem = 私钥 + 证书 (FreeSWITCH 要求合并格式)
     cat "$key_path" "$cert_path" > "$wss_pem"
@@ -218,8 +215,7 @@ update_caddyfile() {
     fi
 
     # 备份
-    cp "$CADDYFILE" "${CADDYFILE}.bak.$(date +%Y%m%d%H%M%S)"
-    log_info "已备份 Caddyfile"
+    backup_file "$CADDYFILE"
 
     local new_cert="${CERT_DIR}/${CERT_NAME}.crt"
     local new_key="${CERT_DIR}/${CERT_NAME}.key"

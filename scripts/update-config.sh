@@ -214,7 +214,7 @@ update_netcore() {
         log_warn "跳过: $cs_file 不存在"
     else
         log_info "更新 netcore/Configurations/ConnectionStrings.json ..."
-        cp "$cs_file" "${cs_file}.bak.$(date +%Y%m%d%H%M%S)"
+        backup_file "$cs_file"
 
         local dotnet_type go_driver
         dotnet_type=$(get_dotnet_dbtype)
@@ -238,7 +238,7 @@ update_netcore() {
         log_warn "跳过: $cache_file 不存在"
     else
         log_info "更新 netcore/Configurations/Cache.json ..."
-        cp "$cache_file" "${cache_file}.bak.$(date +%Y%m%d%H%M%S)"
+        backup_file "$cache_file"
 
         json_replace_str "$cache_file" "ip" "$REDIS_HOST"
         json_replace_num "$cache_file" "port" "$REDIS_PORT"
@@ -254,7 +254,7 @@ update_cti() {
     [[ ! -f "$file" ]] && { log_warn "跳过: $file 不存在"; return 0; }
 
     log_info "更新 cti/appsettings.json ..."
-    cp "$file" "${file}.bak.$(date +%Y%m%d%H%M%S)"
+    backup_file "$file"
 
     local connstr
     connstr=$(build_connstr)
@@ -278,7 +278,7 @@ update_autotask() {
     [[ ! -f "$file" ]] && { log_warn "跳过: $file 不存在"; return 0; }
 
     log_info "更新 autotask/appsettings.json ..."
-    cp "$file" "${file}.bak.$(date +%Y%m%d%H%M%S)"
+    backup_file "$file"
 
     local connstr
     connstr=$(build_connstr)
@@ -306,7 +306,7 @@ update_goapi() {
     [[ ! -f "$file" ]] && { log_warn "跳过: $file 不存在"; return 0; }
 
     log_info "更新 goapi/config.json ..."
-    cp "$file" "${file}.bak.$(date +%Y%m%d%H%M%S)"
+    backup_file "$file"
 
     local go_driver go_db
     go_driver=$(get_go_driver)
@@ -342,7 +342,7 @@ update_getcurl() {
     [[ ! -f "$file" ]] && { log_warn "跳过: $file 不存在"; return 0; }
 
     log_info "更新 getcurl/config.yml ..."
-    cp "$file" "${file}.bak.$(date +%Y%m%d%H%M%S)"
+    backup_file "$file"
 
     # 数据库 (ormcore)
     local go_driver
@@ -379,7 +379,7 @@ update_luahelper() {
     [[ ! -f "$file" ]] && { log_warn "跳过: $file 不存在"; return 0; }
 
     log_info "更新 luahelper/config.yml ..."
-    cp "$file" "${file}.bak.$(date +%Y%m%d%H%M%S)"
+    backup_file "$file"
 
     # ormfs + ormcms (使用相同的缩进, sed 会同时替换两处)
     local go_driver
@@ -405,7 +405,7 @@ update_fs_esl() {
     [[ ! -f "$file" ]] && { log_warn "跳过: $file 不存在"; return 0; }
 
     log_info "更新 fs event_socket.conf.xml ..."
-    cp "$file" "${file}.bak.$(date +%Y%m%d%H%M%S)"
+    backup_file "$file"
 
     sed -i "s|<param name=\"listen-port\" value=\"[^\"]*\"|<param name=\"listen-port\" value=\"${FS_PORT}\"|" "$file"
     sed -i "s|<param name=\"password\" value=\"[^\"]*\"|<param name=\"password\" value=\"${FS_PASSWORD}\"|" "$file"
@@ -437,7 +437,7 @@ update_fs_vip() {
         log_warn "跳过: $vars_file 不存在"
     else
         log_info "更新 fs/conf/vars.xml (domain, domain_name) ..."
-        cp "$vars_file" "${vars_file}.bak.$(date +%Y%m%d%H%M%S)"
+        backup_file "$vars_file"
 
         # 注意: data="domain= 不会误匹配 data="domain_name= (domain 后是 _ 不是 =)
         sed -i "s|data=\"domain=[^\"]*\"|data=\"domain=${vip}\"|g" "$vars_file"
@@ -456,7 +456,7 @@ update_fs_vip() {
         fi
 
         log_info "更新 fs/conf/sip_profiles/${profile}.xml (rtp-ip, sip-ip, ext-rtp-ip, ext-sip-ip) ..."
-        cp "$file" "${file}.bak.$(date +%Y%m%d%H%M%S)"
+        backup_file "$file"
 
         sed -i "s|<param name=\"rtp-ip\" value=\"[^\"]*\"/>|<param name=\"rtp-ip\" value=\"${vip}\"/>|g" "$file"
         sed -i "s|<param name=\"sip-ip\" value=\"[^\"]*\"/>|<param name=\"sip-ip\" value=\"${vip}\"/>|g" "$file"
@@ -480,7 +480,7 @@ update_caddyfile() {
     fi
 
     log_info "更新 Caddyfile 为 HTTP 模式 (无证书) ..."
-    cp "$caddyfile" "${caddyfile}.bak.$(date +%Y%m%d%H%M%S)"
+    backup_file "$caddyfile"
 
     # 1. 注释掉所有未注释的 tls 行
     sed -i "/^[[:space:]]*tls /s/^/# /" "$caddyfile"
@@ -502,7 +502,7 @@ update_compose_redis() {
     [[ ! -f "$COMPOSE_FILE" ]] && { log_warn "跳过: $COMPOSE_FILE 不存在"; return 0; }
 
     log_info "更新 docker-compose.yml Redis 密码 ..."
-    cp "$COMPOSE_FILE" "${COMPOSE_FILE}.bak.$(date +%Y%m%d%H%M%S)"
+    backup_file "$COMPOSE_FILE"
 
     sed -i "s|redis-server --requirepass [^\"]*|redis-server --requirepass ${REDIS_PASSWORD}|" "$COMPOSE_FILE"
 
@@ -535,6 +535,9 @@ main() {
     update_caddyfile
     update_compose_redis
 
+    # 标记配置已应用 (deploy-compose.sh 前置检查依据)
+    touch "${CONFIG_DIR}/.deploy-conf-applied" 2>/dev/null || true
+
     log_step "配置更新完成"
     echo ""
     log_info "已更新的文件:"
@@ -550,7 +553,7 @@ main() {
     echo "    caddy/Caddyfile                 (HTTP 模式, 有证书时跳过)"
     echo "    docker-compose.yml              (Redis 密码)"
     echo ""
-    log_info "原文件已备份为 .bak.<timestamp>"
+    log_info "原文件已备份到 ${BACKUP_BASE}/"
     show_log_path
 }
 

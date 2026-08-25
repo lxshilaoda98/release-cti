@@ -7,9 +7,12 @@
 #   1. Docker CE 全套 .deb 包 (含依赖)
 #   2. Keepalived .deb 包 (含依赖)
 #   3. sngrep .deb 包 (含依赖)
-#   4. Docker 镜像 (docker save 导出为 tar)
-#   5. sipmon 抓包工具静态二进制 (GitHub Releases)
-#   6. daemon.json 模板
+#   4. 运维工具包 .deb (sipp/sipsak/mtr/iftop/nethogs/lnav/jq/htop/iotop)
+#   5. chrony .deb 包 (时间同步, 含依赖)
+#   6. fail2ban .deb 包 (安全防护, 含依赖)
+#   7. Docker 镜像 (docker save 导出为 tar)
+#   8. sipmon 抓包工具静态二进制 (GitHub Releases)
+#   9. daemon.json 模板
 #
 # 用法:
 #   ./prepare-offline.sh                          # 默认输出到 /data/offline-bundle
@@ -47,6 +50,25 @@ parse_args() {
     done
 }
 
+# ============================ 递归下载 deb 包 (含依赖) ============================
+# 逐包下载: 单个失败 (虚拟包等) 不影响其余, 避免整批中断丢包
+# 参数: $@ = 包名列表 (在当前目录下载)
+apt_download_recursive() {
+    local pkgs
+    pkgs=$(apt-cache depends --recurse --no-recommends --no-suggests \
+        --no-conflicts --no-breaks --no-replaces --no-enhances \
+        "$@" 2>/dev/null | grep "^\w" | sort -u) || true
+
+    local p failed=0
+    for p in $pkgs; do
+        if ! apt-get download "$p" 2>/dev/null; then
+            failed=$((failed + 1))
+        fi
+    done
+    [[ $failed -gt 0 ]] && log_info "  (${failed} 个虚拟包/无效项已跳过)"
+    return 0
+}
+
 # ============================ 下载 Docker CE 包 ============================
 download_docker_packages() {
     log_step "下载 Docker CE .deb 包"
@@ -76,9 +98,7 @@ download_docker_packages() {
     local docker_pkgs="docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
     log_info "下载 Docker CE 包及依赖: $docker_pkgs"
     cd "$pkg_dir"
-    apt-get download $(apt-cache depends --recurse --no-recommends --no-suggests \
-        --no-conflicts --no-breaks --no-replaces --no-enhances \
-        $docker_pkgs 2>/dev/null | grep "^\w" | sort -u) 2>/dev/null || true
+    apt_download_recursive $docker_pkgs
 
     local deb_count
     deb_count=$(find "$pkg_dir" -name '*.deb' | wc -l | tr -d ' ')
@@ -94,9 +114,7 @@ download_keepalived_packages() {
 
     log_info "下载 keepalived 及依赖 ..."
     cd "$pkg_dir"
-    apt-get download $(apt-cache depends --recurse --no-recommends --no-suggests \
-        --no-conflicts --no-breaks --no-replaces --no-enhances \
-        keepalived 2>/dev/null | grep "^\w" | sort -u) 2>/dev/null || true
+    apt_download_recursive keepalived
 
     local ka_count
     ka_count=$(find "$pkg_dir" -name '*keepalived*.deb' | wc -l | tr -d ' ')
@@ -177,13 +195,65 @@ download_sngrep_packages() {
 
     log_info "下载 sngrep 及依赖 ..."
     cd "$pkg_dir"
-    apt-get download $(apt-cache depends --recurse --no-recommends --no-suggests \
-        --no-conflicts --no-breaks --no-replaces --no-enhances \
-        sngrep 2>/dev/null | grep "^\w" | sort -u) 2>/dev/null || true
+    apt_download_recursive sngrep
 
     local sg_count
     sg_count=$(find "$pkg_dir" -name '*.deb' | wc -l | tr -d ' ')
     log_info "sngrep 包下载完成: ${sg_count} 个 .deb 文件 (含全部依赖)"
+}
+
+# ============================ 下载运维工具包 ============================
+download_tools_packages() {
+    log_step "下载运维工具包 .deb"
+
+    # 独立子目录: 依赖树完整放在一起, 离线安装时整目录 dpkg
+    local pkg_dir="${OUTPUT_DIR}/packages/tools"
+    mkdir -p "$pkg_dir"
+
+    local tools="sip-tester sipsak mtr iftop nethogs lnav jq htop iotop"
+
+    apt_ensure_universe
+    apt-get update -qq
+
+    log_info "下载运维工具及依赖: $tools"
+    cd "$pkg_dir"
+    apt_download_recursive $tools
+
+    local tool_count
+    tool_count=$(find "$pkg_dir" -name '*.deb' | wc -l | tr -d ' ')
+    log_info "运维工具包下载完成: ${tool_count} 个 .deb 文件 (含全部依赖)"
+}
+
+# ============================ 下载 chrony 包 ============================
+download_chrony_packages() {
+    log_step "下载 chrony .deb 包"
+
+    local pkg_dir="${OUTPUT_DIR}/packages/chrony"
+    mkdir -p "$pkg_dir"
+
+    log_info "下载 chrony 及依赖 ..."
+    cd "$pkg_dir"
+    apt_download_recursive chrony
+
+    local cnt
+    cnt=$(find "$pkg_dir" -name '*.deb' | wc -l | tr -d ' ')
+    log_info "chrony 包下载完成: ${cnt} 个 .deb 文件 (含全部依赖)"
+}
+
+# ============================ 下载 fail2ban 包 ============================
+download_fail2ban_packages() {
+    log_step "下载 fail2ban .deb 包"
+
+    local pkg_dir="${OUTPUT_DIR}/packages/fail2ban"
+    mkdir -p "$pkg_dir"
+
+    log_info "下载 fail2ban 及依赖 ..."
+    cd "$pkg_dir"
+    apt_download_recursive fail2ban
+
+    local cnt
+    cnt=$(find "$pkg_dir" -name '*.deb' | wc -l | tr -d ' ')
+    log_info "fail2ban 包下载完成: ${cnt} 个 .deb 文件 (含全部依赖)"
 }
 
 # ============================ 下载 sipmon 二进制 ============================
@@ -299,6 +369,15 @@ generate_readme() {
 安装 sngrep 抓包工具:
   ./scripts/install-sngrep.sh --offline --pkg-dir /data/offline-bundle/packages/sngrep
 
+安装运维工具包 (sipp/sipsak/mtr/iftop/nethogs/lnav/jq/htop/iotop):
+  ./scripts/install-tools.sh --offline --pkg-dir /data/offline-bundle/packages/tools
+
+安装 chrony 时间同步:
+  ./scripts/install-chrony.sh --offline --pkg-dir /data/offline-bundle/packages/chrony
+
+安装 fail2ban 安全防护:
+  ./scripts/install-fail2ban.sh --offline --pkg-dir /data/offline-bundle/packages/fail2ban
+
 ============================================================
 EOF
     log_info "说明文件已生成: ${readme}"
@@ -329,6 +408,9 @@ main() {
         download_docker_packages
         download_keepalived_packages
         download_sngrep_packages
+        download_tools_packages
+        download_chrony_packages
+        download_fail2ban_packages
         download_sipmon
     else
         log_info "跳过包下载 (--skip-packages)"

@@ -144,12 +144,10 @@ install_offline() {
     log_info "找到 ${#debs[@]} 个 .deb 包:"
     printf '    %s\n' "${debs[@]##*/}"
 
-    # dpkg 一次性安装 (自动处理包间顺序)
+    # dpkg 安装 (多轮处理依赖顺序)
     log_info "安装 .deb 包 ..."
-    if ! dpkg -i "${debs[@]}" 2>/dev/null; then
-        log_warn "dpkg 报告依赖问题，尝试 apt 修复 ..."
-        apt-get install -f -y -qq 2>/dev/null || true
-    fi
+    dpkg_install_debs "${debs[@]}"
+    apt-get install -f -y -qq 2>/dev/null || true
 
     log_ok "sngrep 离线安装完成"
 }

@@ -20,6 +20,10 @@ release-cti/
     ├── install-keepalived.sh         # Keepalived 安装 (标准/CTI 模式)
     ├── install-sipmon.sh             # sipmon 抓包工具安装 (在线/离线)
     ├── install-sngrep.sh             # sngrep 抓包工具安装 (在线/离线)
+    ├── install-tools.sh              # 常用运维工具包安装 (在线/离线)
+    ├── install-chrony.sh             # chrony 时间同步 (在线/离线)
+    ├── install-fail2ban.sh           # fail2ban 安全防护 (在线/离线)
+    ├── tune-sysctl.sh                # 内核参数调优 (conntrack/UDP/句柄)
     ├── gen-cert.sh                   # 证书管理 (已有证书/自签IP证书)
     ├── deploy-compose.sh             # Compose 服务管理 (启停/镜像/配置)
     ├── update-config.sh              # 集中配置同步 (DB/Redis/ESL)
@@ -70,7 +74,10 @@ REMOTE_DIR="/data/deploy"
 [2] 环境安装
     ├── Docker 安装            在线/离线安装 Docker CE + Compose
     ├── Keepalived 安装         标准/CTI 模式 HA 配置
-    └── 自签证书生成            使用已有证书 / 生成自签 IP 证书
+    ├── 自签证书生成            使用已有证书 / 生成自签 IP 证书
+    ├── 时间同步 (chrony)       国内 NTP 源 + 内网 local 兜底
+    ├── 内核参数调优            conntrack 表 / UDP buffer / 句柄数
+    └── fail2ban 安全防护       SSH + FreeSWITCH SIP 防暴力破解
 [3] 服务部署
     ├── Docker Compose 部署     服务管理 / 状态查看 / 手动操作 (二级分类)
     └── 修改服务配置            集中修改 DB/Redis/ESL/VIP 配置
@@ -78,7 +85,8 @@ REMOTE_DIR="/data/deploy"
     ├── 离线包准备              下载 deb 包 + 导出 Docker 镜像 + sipmon 二进制
     ├── 卸载管理                分组件卸载 / 一键全部卸载
     ├── SIP 抓包工具 (sipmon)   在线/离线安装 sipmon
-    └── SIP 抓包工具 (sngrep)   在线/离线安装 sngrep
+    ├── SIP 抓包工具 (sngrep)   在线/离线安装 sngrep
+    └── 常用运维工具包          sipp/sipsak/mtr/iftop/nethogs/lnav/jq/htop/iotop
 [0] 退出 / [ESC] 返回
 ```
 
@@ -95,7 +103,7 @@ REMOTE_DIR="/data/deploy"
    ├── 手动操作 → 解压配置文件   → 解压 config.zip 到 /data/config
    ├── 手动操作 → 初始化模板     → 从模板生成 docker-compose.yml
    ├── 手动操作 → 拉取镜像       → 拉取所有 Docker 镜像
-   └── 服务管理 → 部署/启动服务  → 按顺序启动容器
+   └── 服务管理 → 部署/启动服务  → 按顺序启动容器 (可选在线/离线模式)
 ```
 
 ### 一键全量部署
@@ -203,6 +211,8 @@ VIP=""
 - Docker CE 全套 .deb 包（含依赖）
 - Keepalived .deb 包（含依赖）
 - sngrep .deb 包（含依赖）
+- 运维工具包 .deb（sipp/sipsak/mtr/iftop/nethogs/lnav/jq/htop/iotop，含依赖）
+- chrony / fail2ban .deb 包（含依赖）
 - Docker 镜像（docker save 导出为 tar）
 - sipmon 抓包工具静态二进制（GitHub Releases）
 - daemon.json 模板
@@ -246,6 +256,49 @@ VIP=""
 ```
 
 常用命令：`sngrep`（实时抓 SIP 包）/ `sngrep -d eth0 port 5060`（指定网卡+过滤）/ `sngrep -r capture.pcap`（离线分析）
+
+### 常用运维工具包 (`install-tools.sh`)
+
+一次安装 9 个常用运维工具（Ubuntu 官方仓库）：
+
+| 工具 | 用途 | 工具 | 用途 |
+|------|------|------|------|
+| `sipp` (sip-tester) | SIP 压测/呼叫模拟 | `nethogs` | 按进程看流量 |
+| `sipsak` | SIP OPTIONS/INVITE 探测 | `lnav` | 日志浏览/过滤 |
+| `mtr` | 路由+丢包诊断 | `jq` | JSON 命令行处理 |
+| `iftop` | 实时带宽 | `htop` | 进程/资源监控 |
+| `iotop` | 磁盘 IO 监控 | | |
+
+```bash
+./scripts/install-tools.sh --online    # 在线安装 (自动启用 universe 仓库)
+./scripts/install-tools.sh --offline   # 离线安装 (packages/tools 整目录)
+./scripts/install-tools.sh --status    # 逐个查看安装状态
+```
+
+### 时间同步 (`install-chrony.sh`)
+
+VoIP 双节点 HA 对时间敏感（CDR 话单 / RTP 时间戳 / 日志对齐）。安装 chrony 并配置国内 NTP 源（阿里/腾讯/清华）+ `local stratum 10` 内网兜底（无外网时本机可作时间源）。
+
+### 内核参数调优 (`tune-sysctl.sh`)
+
+SIP 服务器经典坑（conntrack 表满丢包）预防，写入 `/etc/sysctl.d/99-cti-voip.conf` 并生效，原配置自动备份：
+
+| 参数 | 推荐值 | 说明 |
+|------|--------|------|
+| `net.netfilter.nf_conntrack_max` | 1048576 | 连接跟踪表 |
+| `net.core.somaxconn` | 65535 | 监听队列 |
+| `net.core.rmem_max` / `wmem_max` | 26214400 | UDP buffer |
+| `net.ipv4.ip_local_port_range` | 1024 65535 | 本地端口范围 |
+| `fs.file-max` | 2097152 | 文件句柄 |
+
+```bash
+./scripts/tune-sysctl.sh --status   # 查看当前值 vs 推荐值
+./scripts/tune-sysctl.sh --apply    # 应用调优
+```
+
+### fail2ban 安全防护 (`install-fail2ban.sh`)
+
+SSH + SIP 防暴力破解。配置 `jail.local`：默认启用 sshd jail；检测到 `/data/logs/fs/`(FreeSWITCH 日志卷）存在时自动启用 freeswitch jail，监控 SIP 认证失败（5 次/10 分钟 → 封禁 1 小时）。
 
 ## 优化功能
 
