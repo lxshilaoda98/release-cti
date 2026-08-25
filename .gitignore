@@ -12,3 +12,6 @@ backup/
 
 # 日志
 *.log
+
+# macOS 系统垃圾文件
+.DS_Store
