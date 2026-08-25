@@ -12,10 +12,11 @@
 #   2. Keepalived 安装      (在线/离线)
 #   3. 自签证书生成
 #   4. Docker Compose 部署
-#   5. 一键全量部署
-#   6. 卸载管理
+#   5. 修改服务配置
+#   6. 一键全量部署
 #   7. 离线包准备
-#   8. 修改服务配置
+#   8. 卸载管理
+#   9. SIP 抓包工具 (sipmon) 安装 (在线/离线)
 #
 # 远程模式通过跳板机 SSH 连接目标服务器，自动推送脚本并执行。
 # 连接配置见 config/remote.conf
@@ -115,6 +116,17 @@ check_compose_deployed() {
     fi
 }
 
+# 状态检测: sipmon 抓包工具
+check_sipmon() {
+    if command -v sipmon &>/dev/null || [[ -x /usr/local/bin/sipmon ]]; then
+        local ver
+        ver=$(sipmon --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "?")
+        echo -e "${GREEN}✓ 已安装 ${ver}${NC}"
+    else
+        echo -e "${RED}✗ 未安装${NC}"
+    fi
+}
+
 # 确认提示: 传参为提示语, 返回 0=是 1=否
 confirm() {
     local prompt="$1"
@@ -211,6 +223,7 @@ main_menu() {
         printf "    %-20s %s\n" "Keepalived" "$(check_keepalived)"
         printf "    %-20s %s\n" "自签证书" "$(check_cert)"
         printf "    %-20s %s\n" "Compose 服务" "$(check_compose_deployed)"
+        printf "    %-20s %s\n" "sipmon 抓包工具" "$(check_sipmon)"
         print_line
 
         echo ""
@@ -224,6 +237,7 @@ main_menu() {
         echo -e "    ${CYAN}[6]${NC}  一键全量部署"
         echo -e "    ${CYAN}[7]${NC}  离线包准备"
         echo -e "    ${CYAN}[8]${NC}  卸载管理"
+        echo -e "    ${CYAN}[9]${NC}  SIP 抓包工具 (sipmon)"
         echo ""
         echo -e "    ${DIM}[0] 退出 / [ESC] 返回${NC}"
         echo ""
@@ -240,6 +254,7 @@ main_menu() {
             6) menu_full_deploy ;;
             7) menu_offline_prepare ;;
             8) menu_uninstall ;;
+            9) menu_sipmon ;;
             0)
                 echo ""
                 log_info "再见！"
@@ -877,6 +892,65 @@ uninstall_all_menu() {
     pause_enter
 }
 
+# ============================ SIP 抓包工具 (sipmon) 子菜单 ============================
+menu_sipmon() {
+    while true; do
+        print_header
+        echo -e "  ${BOLD}SIP 抓包工具 (sipmon)${NC}"
+        echo -e "  ${DIM}当前状态:$(check_sipmon)${NC}"
+        echo -e "  ${DIM}SIP/RTP 信令与媒体质量监控, 静态二进制零依赖${NC}"
+        print_line
+        echo ""
+        echo -e "  请选择操作:"
+        echo ""
+        echo -e "    ${CYAN}[1]${NC}  在线安装    ${DIM}(GitHub Releases 下载静态二进制)${NC}"
+        echo -e "    ${CYAN}[2]${NC}  离线安装    ${DIM}(从 /data/images 安装本地二进制)${NC}"
+        echo -e "    ${CYAN}[3]${NC}  卸载        ${DIM}(删除 /usr/local/bin/sipmon)${NC}"
+        echo -e "    ${CYAN}[4]${NC}  查看状态    ${DIM}(显示版本与常用命令)${NC}"
+        echo ""
+        echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
+        echo ""
+
+        read_choice "请输入序号: " ""
+        choice="$REPLY"
+
+        case "$choice" in
+            1)
+                echo ""
+                if confirm "确认在线安装 sipmon？"; then
+                    bash "${SCRIPTS_DIR}/install-sipmon.sh" --online
+                    pause_enter
+                fi
+                return
+                ;;
+            2)
+                echo ""
+                if confirm "确认离线安装 sipmon？"; then
+                    bash "${SCRIPTS_DIR}/install-sipmon.sh" --offline
+                    pause_enter
+                fi
+                return
+                ;;
+            3)
+                echo ""
+                if confirm "确认卸载 sipmon？"; then
+                    bash "${SCRIPTS_DIR}/install-sipmon.sh" --uninstall
+                    pause_enter
+                fi
+                return
+                ;;
+            4)
+                echo ""
+                bash "${SCRIPTS_DIR}/install-sipmon.sh" --status
+                pause_enter
+                return
+                ;;
+            0) return ;;
+            *) log_warn "无效输入"; sleep 1 ;;
+        esac
+    done
+}
+
 # ============================ 离线包准备子菜单 ============================
 menu_offline_prepare() {
     print_header
@@ -888,6 +962,7 @@ menu_offline_prepare() {
     echo -e "    ${DIM}- Docker CE 全套 .deb 包 (含依赖)${NC}"
     echo -e "    ${DIM}- Keepalived .deb 包${NC}"
     echo -e "    ${DIM}- Docker 镜像 (docker save 导出)${NC}"
+    echo -e "    ${DIM}- sipmon 抓包工具静态二进制${NC}"
     echo -e "    ${DIM}- daemon.json 模板${NC}"
     echo ""
 

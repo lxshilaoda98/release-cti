@@ -267,6 +267,117 @@ check_container_health() {
     return 1
 }
 
+# ============================ sipmon 下载辅助 ============================
+# sipmon: SIP/RTP 抓包监控工具 (https://github.com/miuda-ai/sipmon)
+# 官方 Release 提供静态 musl 二进制 (x86_64 / aarch64)
+SIPMON_REPO="miuda-ai/sipmon"
+SIPMON_DEFAULT_VERSION="v0.1.17"   # API 查询失败时的兜底版本
+SIPMON_GITHUB_PROXY=""             # 可选 GitHub 加速代理前缀 (如 https://ghproxy.net/)
+
+# 列出最近 5 个 release tag (需要网络, 失败输出为空)
+sipmon_list_tags() {
+    curl -fsSL --connect-timeout 10 \
+        "https://api.github.com/repos/${SIPMON_REPO}/releases?per_page=5" 2>/dev/null \
+        | grep -oE '"tag_name": *"v[^"]+"' | grep -oE 'v[0-9.]+' || true
+}
+
+# 计算文件 sha256 (兼容 Linux / macOS)
+sipmon_sha256() {
+    sha256sum "$1" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'
+}
+
+# 校验文件是否与同目录 .sha256 一致 (无 .sha256 时跳过)
+# 参数: $1 = 二进制文件路径
+# 返回: 0=通过/跳过 1=校验失败
+sipmon_verify_file() {
+    local bin_file="$1"
+    local sha_file="${bin_file}.sha256"
+
+    if [[ ! -f "$sha_file" ]]; then
+        log_warn "未找到 $(basename "$sha_file")，跳过 SHA256 校验"
+        return 0
+    fi
+
+    local expected actual
+    expected=$(grep -oE '[0-9a-f]{64}' "$sha_file" | head -1)
+    actual=$(sipmon_sha256 "$bin_file")
+
+    if [[ -n "$expected" && "$expected" != "$actual" ]]; then
+        log_error "SHA256 校验失败: $(basename "$bin_file")"
+        log_error "  期望: $expected"
+        log_error "  实际: $actual"
+        return 1
+    fi
+    log_info "SHA256 校验通过"
+    return 0
+}
+
+# 下载 sipmon 静态二进制到指定目录 (自动回退: 最新 release 无对应架构时往前找)
+# 参数: $1 = 架构后缀 (如 x86_64-unknown-linux-musl)
+#       $2 = 目标目录
+#       $3 = 指定版本 (可选, 为空则自动选择最新可用版本)
+# 成功: 设置 SIPMON_DOWNLOADED (文件路径) / SIPMON_VERSION_RESOLVED (版本号), 返回 0
+sipmon_download() {
+    local suffix="$1" dest_dir="$2" version="${3:-}"
+    local name="sipmon-${suffix}"
+    mkdir -p "$dest_dir"
+
+    local tags
+    if [[ -n "$version" ]]; then
+        tags="$version"
+    else
+        tags=$(sipmon_list_tags)
+        if [[ -z "$tags" ]]; then
+            log_warn "GitHub API 查询失败 (可能限流)，使用兜底版本 ${SIPMON_DEFAULT_VERSION}"
+            tags="$SIPMON_DEFAULT_VERSION"
+        fi
+        log_info "可用版本: $(echo "$tags" | tr '\n' ' ')"
+    fi
+
+    local tag url sha_url tmp_bin sha_content=""
+    for tag in $tags; do
+        url="${SIPMON_GITHUB_PROXY}https://github.com/${SIPMON_REPO}/releases/download/${tag}/${name}"
+        tmp_bin="${dest_dir}/.${name}.tmp"
+
+        log_info "尝试下载: ${tag} -> ${name}"
+        if ! curl -fsSL --connect-timeout 15 -o "$tmp_bin" "$url"; then
+            log_warn "  下载失败 (该版本可能无此架构)，尝试下一个版本"
+            rm -f "$tmp_bin"
+            continue
+        fi
+
+        # 大小校验 (防止下载到错误页)
+        local size
+        size=$(stat -c%s "$tmp_bin" 2>/dev/null || stat -f%z "$tmp_bin" 2>/dev/null || echo 0)
+        if [[ "${size:-0}" -lt 100000 ]]; then
+            log_warn "  文件过小 (${size} 字节)，非有效二进制，尝试下一个版本"
+            rm -f "$tmp_bin"
+            continue
+        fi
+
+        # 下载并校验 sha256
+        sha_content=$(curl -fsSL --connect-timeout 10 "${url}.sha256" 2>/dev/null || true)
+        mv "$tmp_bin" "${dest_dir}/${name}"
+        if [[ -n "$sha_content" ]]; then
+            echo "$sha_content" > "${dest_dir}/${name}.sha256"
+            if ! sipmon_verify_file "${dest_dir}/${name}"; then
+                rm -f "${dest_dir}/${name}" "${dest_dir}/${name}.sha256"
+                return 1
+            fi
+        else
+            log_warn "  未获取到 .sha256，跳过校验"
+        fi
+
+        chmod +x "${dest_dir}/${name}"
+        SIPMON_DOWNLOADED="${dest_dir}/${name}"
+        SIPMON_VERSION_RESOLVED="$tag"
+        return 0
+    done
+
+    log_error "所有版本均下载失败 (架构: ${suffix})"
+    return 1
+}
+
 # ============================ SSH 远程辅助 ============================
 # 创建临时密码文件 (避免命令行暴露密码)
 # 设置全局变量: _SSH_JUMP_PASS_FILE, _SSH_TARGET_PASS_FILE

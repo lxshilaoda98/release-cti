@@ -18,6 +18,7 @@ release-cti/
     ├── install-docker.sh             # Docker CE 安装 (在线/离线)
     ├── uninstall-docker.sh           # Docker 卸载 (三级清理)
     ├── install-keepalived.sh         # Keepalived 安装 (标准/CTI 模式)
+    ├── install-sipmon.sh             # sipmon 抓包工具安装 (在线/离线)
     ├── gen-cert.sh                   # 证书管理 (已有证书/自签IP证书)
     ├── deploy-compose.sh             # Compose 服务管理 (启停/镜像/配置)
     ├── update-config.sh              # 集中配置同步 (DB/Redis/ESL)
@@ -70,8 +71,9 @@ REMOTE_DIR="/data/deploy"
 [4] Docker Compose 部署   按顺序启动/停止/重启服务
 [5] 修改服务配置          集中修改 DB/Redis/ESL 配置
 [6] 一键全量部署          按顺序执行全部部署步骤
-[7] 离线包准备            下载 deb 包 + 导出 Docker 镜像
+[7] 离线包准备            下载 deb 包 + 导出 Docker 镜像 + sipmon 二进制
 [8] 卸载管理              分组件卸载 / 一键全部卸载
+[9] SIP 抓包工具 (sipmon)  在线/离线安装 sipmon
 [0] 退出 / [ESC] 返回
 ```
 
@@ -190,11 +192,31 @@ FS_PASSWORD="1qaz@WSX.."
 - Docker CE 全套 .deb 包（含依赖）
 - Keepalived .deb 包（含依赖）
 - Docker 镜像（docker save 导出为 tar）
+- sipmon 抓包工具静态二进制（GitHub Releases）
 - daemon.json 模板
 
 ```bash
 ./scripts/prepare-offline.sh --output /data/offline-bundle
 ```
+
+### SIP 抓包工具 (`install-sipmon.sh`)
+
+[sipmon](https://github.com/miuda-ai/sipmon)：SIP/RTP 信令与媒体质量监控工具，静态 musl 二进制零依赖，安装到 `/usr/local/bin/sipmon`。
+
+| 模式 | 说明 |
+|------|------|
+| 在线安装 | GitHub Releases 下载 + SHA256 校验，最新版缺当前架构时自动回退旧版 |
+| 离线安装 | 从本地目录安装（默认 `/data/images`，自动兼容 `/data/offline-bundle/images`） |
+
+```bash
+./scripts/install-sipmon.sh --online                    # 在线安装最新可用版本
+./scripts/install-sipmon.sh --online --version v0.1.17  # 指定版本
+./scripts/install-sipmon.sh --online --proxy https://ghproxy.net/  # GitHub 加速代理
+./scripts/install-sipmon.sh --offline                   # 离线安装
+./scripts/install-sipmon.sh --uninstall                 # 卸载
+```
+
+常用命令：`sipmon live -i any`（实时 TUI 监控）/ `sipmon record -i any -w cap.evlog -d`（后台录制）/ `sipmon file -r capture.pcap`（离线分析）
 
 ## 优化功能
 

@@ -7,7 +7,8 @@
 #   1. Docker CE 全套 .deb 包 (含依赖)
 #   2. Keepalived .deb 包 (含依赖)
 #   3. Docker 镜像 (docker save 导出为 tar)
-#   4. daemon.json 模板
+#   4. sipmon 抓包工具静态二进制 (GitHub Releases)
+#   5. daemon.json 模板
 #
 # 用法:
 #   ./prepare-offline.sh                          # 默认输出到 /data/offline-bundle
@@ -165,6 +166,40 @@ export_docker_images() {
     log_info "镜像导出完成: 成功 $((total - failed))/${total}"
 }
 
+# ============================ 下载 sipmon 二进制 ============================
+download_sipmon() {
+    log_step "下载 sipmon 抓包工具"
+
+    local arch suffix
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64)        suffix="x86_64-unknown-linux-musl" ;;
+        aarch64|arm64) suffix="aarch64-unknown-linux-musl" ;;
+        *)
+            log_warn "不支持的架构: $arch，跳过 sipmon 下载"
+            return 0
+            ;;
+    esac
+
+    # 放到 images/ 子目录, 与 deploy-compose.sh 离线镜像目录一致
+    local bin_dir="${OUTPUT_DIR}/images"
+    mkdir -p "$bin_dir"
+
+    # 已存在则跳过
+    local existing
+    existing=$(find "$bin_dir" -maxdepth 1 -type f -name "sipmon-${suffix}" 2>/dev/null | head -1)
+    if [[ -n "$existing" ]]; then
+        log_info "sipmon 二进制已存在，跳过: $(basename "$existing")"
+        return 0
+    fi
+
+    if sipmon_download "$suffix" "$bin_dir" ""; then
+        log_info "sipmon 下载完成: $(basename "$SIPMON_DOWNLOADED") (${SIPMON_VERSION_RESOLVED})"
+    else
+        log_warn "sipmon 下载失败，可稍后重试或在目标机在线安装"
+    fi
+}
+
 # ============================ 生成 daemon.json 模板 ============================
 copy_daemon_template() {
     log_step "生成 daemon.json 模板"
@@ -201,10 +236,13 @@ generate_readme() {
     local readme="${OUTPUT_DIR}/README.txt"
     local pkg_count=0
     local img_count=0
+    local sipmon_file=""
     local total_size=""
 
     [[ -d "${OUTPUT_DIR}/packages" ]] && pkg_count=$(find "${OUTPUT_DIR}/packages" -name '*.deb' | wc -l | tr -d ' ')
     [[ -d "${OUTPUT_DIR}/images" ]] && img_count=$(find "${OUTPUT_DIR}/images" -name '*.tar' | wc -l | tr -d ' ')
+    sipmon_file=$(find "${OUTPUT_DIR}/images" -maxdepth 1 -type f -name 'sipmon-*-linux-musl' 2>/dev/null | head -1 || true)
+    sipmon_file="${sipmon_file:+$(basename "$sipmon_file")}"
     total_size=$(du -sh "${OUTPUT_DIR}" 2>/dev/null | awk '{print $1}')
 
     cat > "$readme" << EOF
@@ -216,7 +254,8 @@ generate_readme() {
 
 目录结构:
   packages/       ${pkg_count} 个 .deb 安装包
-  images/         ${img_count} 个 Docker 镜像 tar 包
+  images/         ${img_count} 个 Docker 镜像 tar 包${sipmon_file:+
+                  + sipmon 抓包工具: ${sipmon_file}}
   daemon.json     Docker 配置模板
   README.txt      本文件
 
@@ -232,6 +271,10 @@ generate_readme() {
   for f in /data/offline-bundle/images/*.tar; do
       docker load -i "\$f"
   done
+
+安装 sipmon 抓包工具:
+  ./scripts/install-sipmon.sh --offline --pkg-dir /data/offline-bundle/images
+  (或在 deploy.sh 菜单选择 [9] -> [2] 离线安装)
 
 ============================================================
 EOF
@@ -262,6 +305,7 @@ main() {
     if [[ "$SKIP_PACKAGES" == false ]]; then
         download_docker_packages
         download_keepalived_packages
+        download_sipmon
     else
         log_info "跳过包下载 (--skip-packages)"
     fi

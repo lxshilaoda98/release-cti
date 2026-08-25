@@ -128,8 +128,7 @@ services:
       - ./config/ivrweb/dist:/usr/share/nginx/html/ivrweb
       - ./upload/RecordWav:/service/upload/RecordWav
       - ./config/caddy:/etc/caddy
-      - ./config/caddy/cert:/data/config/cert
-      - ./config/caddy/cert:/data/config/cert
+      - /data/config/cert:/data/config/cert
   autotask:
     container_name: autotask
     image: mcr.microsoft.com/dotnet/sdk:6.0
