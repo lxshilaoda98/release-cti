@@ -19,6 +19,7 @@ release-cti/
     ├── uninstall-docker.sh           # Docker 卸载 (三级清理)
     ├── install-keepalived.sh         # Keepalived 安装 (标准/CTI 模式)
     ├── install-sipmon.sh             # sipmon 抓包工具安装 (在线/离线)
+    ├── install-sngrep.sh             # sngrep 抓包工具安装 (在线/离线)
     ├── gen-cert.sh                   # 证书管理 (已有证书/自签IP证书)
     ├── deploy-compose.sh             # Compose 服务管理 (启停/镜像/配置)
     ├── update-config.sh              # 集中配置同步 (DB/Redis/ESL)
@@ -65,15 +66,19 @@ REMOTE_DIR="/data/deploy"
 ## 功能菜单
 
 ```
-[1] Docker 安装          在线/离线安装 Docker CE + Compose
-[2] Keepalived 安装       标准/CTI 模式 HA 配置
-[3] 自签证书生成          使用已有证书 / 生成自签 IP 证书
-[4] Docker Compose 部署   按顺序启动/停止/重启服务
-[5] 修改服务配置          集中修改 DB/Redis/ESL 配置
-[6] 一键全量部署          按顺序执行全部部署步骤
-[7] 离线包准备            下载 deb 包 + 导出 Docker 镜像 + sipmon 二进制
-[8] 卸载管理              分组件卸载 / 一键全部卸载
-[9] SIP 抓包工具 (sipmon)  在线/离线安装 sipmon
+[1] 一键全量部署       按顺序执行全部部署步骤
+[2] 环境安装
+    ├── Docker 安装            在线/离线安装 Docker CE + Compose
+    ├── Keepalived 安装         标准/CTI 模式 HA 配置
+    └── 自签证书生成            使用已有证书 / 生成自签 IP 证书
+[3] 服务部署
+    ├── Docker Compose 部署     服务管理 / 状态查看 / 手动操作 (二级分类)
+    └── 修改服务配置            集中修改 DB/Redis/ESL/VIP 配置
+[4] 运维工具
+    ├── 离线包准备              下载 deb 包 + 导出 Docker 镜像 + sipmon 二进制
+    ├── 卸载管理                分组件卸载 / 一键全部卸载
+    ├── SIP 抓包工具 (sipmon)   在线/离线安装 sipmon
+    └── SIP 抓包工具 (sngrep)   在线/离线安装 sngrep
 [0] 退出 / [ESC] 返回
 ```
 
@@ -82,20 +87,20 @@ REMOTE_DIR="/data/deploy"
 ### 标准部署顺序
 
 ```
-1. [1] Docker 安装          → 安装 Docker 环境
-2. [2] Keepalived 安装       → 配置高可用 (可选)
-3. [3] 自签证书生成          → 生成证书 + 更新 Caddyfile
-4. [5] 修改服务配置          → 修改数据库/Redis/ESL 配置
-5. [4] Docker Compose 部署
-   ├── [10] 解压配置文件     → 解压 config.zip 到 /data/config
-   ├── [8] 初始化模板        → 从模板生成 docker-compose.yml
-   ├── [9] 拉取镜像          → 拉取所有 Docker 镜像
-   └── [1] 部署/启动服务     → 按顺序启动容器
+1. 环境安装 → Docker 安装        → 安装 Docker 环境
+2. 环境安装 → Keepalived 安装    → 配置高可用 (可选)
+3. 环境安装 → 自签证书生成       → 生成证书 + 更新 Caddyfile
+4. 服务部署 → 修改服务配置       → 修改数据库/Redis/ESL/VIP 配置
+5. 服务部署 → Docker Compose 部署
+   ├── 手动操作 → 解压配置文件   → 解压 config.zip 到 /data/config
+   ├── 手动操作 → 初始化模板     → 从模板生成 docker-compose.yml
+   ├── 手动操作 → 拉取镜像       → 拉取所有 Docker 镜像
+   └── 服务管理 → 部署/启动服务  → 按顺序启动容器
 ```
 
 ### 一键全量部署
 
-选 [6] 自动执行上述全部步骤，选择在线或离线模式即可。
+主菜单选 [1] 自动执行上述全部步骤，选择在线或离线模式即可。
 
 ## 各模块说明
 
@@ -197,6 +202,7 @@ VIP=""
 在有网络的机器上一键下载：
 - Docker CE 全套 .deb 包（含依赖）
 - Keepalived .deb 包（含依赖）
+- sngrep .deb 包（含依赖）
 - Docker 镜像（docker save 导出为 tar）
 - sipmon 抓包工具静态二进制（GitHub Releases）
 - daemon.json 模板
@@ -224,6 +230,23 @@ VIP=""
 
 常用命令：`sipmon live -i any`（实时 TUI 监控）/ `sipmon record -i any -w cap.evlog -d`（后台录制）/ `sipmon file -r capture.pcap`（离线分析）
 
+### SIP 抓包工具 (`install-sngrep.sh`)
+
+[sngrep](https://github.com/irontec/sngrep)：SIP 信令抓包分析工具（ncurses TUI），使用 Ubuntu 官方仓库 `.deb` 包安装。
+
+| 模式 | 说明 |
+|------|------|
+| 在线安装 | `apt-get install sngrep` |
+| 离线安装 | 从本地 `.deb` 包安装（默认 `/data/images`，自动兼容 `/data/offline-bundle/packages`） |
+
+```bash
+./scripts/install-sngrep.sh --online    # 在线安装
+./scripts/install-sngrep.sh --offline   # 离线安装 (sngrep + 依赖 deb)
+./scripts/install-sngrep.sh --uninstall # 卸载
+```
+
+常用命令：`sngrep`（实时抓 SIP 包）/ `sngrep -d eth0 port 5060`（指定网卡+过滤）/ `sngrep -r capture.pcap`（离线分析）
+
 ## 优化功能
 
 | 功能 | 说明 |
@@ -233,7 +256,7 @@ VIP=""
 | 部署前备份 | 修改前自动备份到 `/data/backup/` |
 | 磁盘空间预检 | 安装前检查可用空间 |
 | 容器健康检查 | 启动后轮询容器健康状态，异常打印日志 |
-| ESC 快速返回 | 菜单中按 ESC + 回车返回上级 |
+| ESC 快速返回 | 菜单中按 ESC 直接返回上级 |
 
 ## 适用环境
 

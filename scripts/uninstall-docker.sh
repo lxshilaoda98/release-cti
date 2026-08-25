@@ -7,6 +7,7 @@
 #   卸载但保留数据:   ./uninstall-docker.sh
 #   卸载并清理数据:   ./uninstall-docker.sh --purge
 #   卸载并清理全部:   ./uninstall-docker.sh --purge --clean-images
+#   跳过确认(脚本调用): ./uninstall-docker.sh --purge --yes
 #
 ###############################################################################
 set -euo pipefail
@@ -18,6 +19,7 @@ source "${SCRIPT_DIR}/lib/common.sh"
 # ============================ 参数 ============================
 PURGE=false
 CLEAN_IMAGES=false
+ASSUME_YES=false
 DATA_ROOT="/data/dockerdata"
 
 parse_args() {
@@ -25,6 +27,7 @@ parse_args() {
         case "$1" in
             --purge)         PURGE=true;         shift ;;
             --clean-images)  CLEAN_IMAGES=true;  shift ;;
+            --yes|-y)        ASSUME_YES=true;    shift ;;
             --data-root)     DATA_ROOT="$2";     shift 2 ;;
             -h|--help)
                 grep '^#' "$0" | head -15
@@ -191,7 +194,7 @@ main() {
     echo "========================================================"
     echo ""
 
-    if [[ "$PURGE" == true ]]; then
+    if [[ "$PURGE" == true && "$ASSUME_YES" != true ]]; then
         log_warn "⚠️  警告: 将清理 Docker 数据，此操作不可逆！"
         read -rp "确认继续？输入 yes 继续: " confirm_text
         [[ "$confirm_text" == "yes" ]] || { log_info "已取消"; exit 0; }

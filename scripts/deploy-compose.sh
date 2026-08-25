@@ -135,7 +135,7 @@ do_init() {
 
     cp "$template" "$COMPOSE_FILE"
     log_ok "已复制模板到: ${COMPOSE_FILE}"
-    log_info "修改模板后重新执行 [8] 即可同步到 /data/docker-compose.yml"
+    log_info "修改模板后重新执行: 菜单 -> 服务部署 -> Docker Compose 部署 -> 手动操作 -> 初始化模板"
 }
 
 # ============================ 解压配置文件 ============================
@@ -301,7 +301,7 @@ check_prerequisites() {
 
     # 处理缺失项
     if [[ "$has_config" != true ]]; then
-        log_warn "配置文件未解压！请先执行: 菜单 [4] -> [9] 解压配置文件"
+        log_warn "配置文件未解压！请先执行: 菜单 -> 服务部署 -> Docker Compose 部署 -> 手动操作 -> 解压配置文件"
         if [[ -f /data/config/config.zip ]] || [[ -f "${SCRIPT_DIR}/../config/config.zip" ]]; then
             if confirm "是否现在解压 config.zip？"; then
                 do_extract_config

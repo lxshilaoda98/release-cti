@@ -8,15 +8,10 @@
 #   远程部署:   ./deploy.sh --remote
 #
 # 功能模块:
-#   1. Docker 安装          (在线/离线)
-#   2. Keepalived 安装      (在线/离线)
-#   3. 自签证书生成
-#   4. Docker Compose 部署
-#   5. 修改服务配置
-#   6. 一键全量部署
-#   7. 离线包准备
-#   8. 卸载管理
-#   9. SIP 抓包工具 (sipmon) 安装 (在线/离线)
+#   [1] 一键全量部署
+#   [2] 环境安装    (Docker / Keepalived / 自签证书)
+#   [3] 服务部署    (Docker Compose 部署 / 修改服务配置)
+#   [4] 运维工具    (离线包准备 / 卸载管理 / sipmon / sngrep)
 #
 # 远程模式通过跳板机 SSH 连接目标服务器，自动推送脚本并执行。
 # 连接配置见 config/remote.conf
@@ -127,6 +122,17 @@ check_sipmon() {
     fi
 }
 
+# 状态检测: sngrep 抓包工具
+check_sngrep() {
+    if command -v sngrep &>/dev/null; then
+        local ver
+        ver=$(sngrep -V 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9.]+' || echo "?")
+        echo -e "${GREEN}✓ 已安装 ${ver}${NC}"
+    else
+        echo -e "${RED}✗ 未安装${NC}"
+    fi
+}
+
 # 确认提示: 传参为提示语, 返回 0=是 1=否
 confirm() {
     local prompt="$1"
@@ -224,22 +230,54 @@ main_menu() {
         printf "    %-20s %s\n" "自签证书" "$(check_cert)"
         printf "    %-20s %s\n" "Compose 服务" "$(check_compose_deployed)"
         printf "    %-20s %s\n" "sipmon 抓包工具" "$(check_sipmon)"
+        printf "    %-20s %s\n" "sngrep 抓包工具" "$(check_sngrep)"
         print_line
 
         echo ""
         echo -e "  ${BOLD}请选择要执行的操作:${NC}"
         echo ""
-        echo -e "    ${CYAN}[1]${NC}  Docker 安装"
-        echo -e "    ${CYAN}[2]${NC}  Keepalived 安装"
-        echo -e "    ${CYAN}[3]${NC}  自签证书生成"
-        echo -e "    ${CYAN}[4]${NC}  Docker Compose 部署"
-        echo -e "    ${CYAN}[5]${NC}  修改服务配置"
-        echo -e "    ${CYAN}[6]${NC}  一键全量部署"
-        echo -e "    ${CYAN}[7]${NC}  离线包准备"
-        echo -e "    ${CYAN}[8]${NC}  卸载管理"
-        echo -e "    ${CYAN}[9]${NC}  SIP 抓包工具 (sipmon)"
+        echo -e "    ${CYAN}[1]${NC}  一键全量部署    ${DIM}(按顺序执行全部部署步骤)${NC}"
+        echo -e "    ${CYAN}[2]${NC}  环境安装        ${DIM}(Docker / Keepalived / 证书)${NC}"
+        echo -e "    ${CYAN}[3]${NC}  服务部署        ${DIM}(Compose 部署 / 修改服务配置)${NC}"
+        echo -e "    ${CYAN}[4]${NC}  运维工具        ${DIM}(离线包准备 / 卸载管理 / sipmon / sngrep)${NC}"
         echo ""
         echo -e "    ${DIM}[0] 退出 / [ESC] 返回${NC}"
+        echo ""
+
+        read_choice "请输入序号: " ""
+        choice="$REPLY"
+
+        case "$choice" in
+            1) menu_full_deploy ;;
+            2) menu_env_install ;;
+            3) menu_service_deploy ;;
+            4) menu_ops_tools ;;
+            0)
+                echo ""
+                log_info "再见！"
+                show_log_path
+                exit 0
+                ;;
+            *) log_warn "无效输入，请重新选择"; sleep 1 ;;
+        esac
+    done
+}
+
+# ============================ 二级菜单: 环境安装 ============================
+menu_env_install() {
+    while true; do
+        print_header
+        echo -e "  ${BOLD}环境安装${NC}"
+        echo -e "  ${DIM}Docker:$(check_docker) | Keepalived:$(check_keepalived)${NC}"
+        print_line
+        echo ""
+        echo -e "  请选择操作:"
+        echo ""
+        echo -e "    ${CYAN}[1]${NC}  Docker 安装            ${DIM}(在线/离线安装 Docker CE + Compose)${NC}"
+        echo -e "    ${CYAN}[2]${NC}  Keepalived 安装        ${DIM}(标准/CTI 模式 HA 配置)${NC}"
+        echo -e "    ${CYAN}[3]${NC}  自签证书生成          ${DIM}(使用已有证书 / 生成自签 IP 证书)${NC}"
+        echo ""
+        echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
         echo ""
 
         read_choice "请输入序号: " ""
@@ -249,18 +287,66 @@ main_menu() {
             1) menu_docker ;;
             2) menu_keepalived ;;
             3) menu_cert ;;
-            4) menu_compose ;;
-            5) menu_update_config ;;
-            6) menu_full_deploy ;;
-            7) menu_offline_prepare ;;
-            8) menu_uninstall ;;
-            9) menu_sipmon ;;
-            0)
-                echo ""
-                log_info "再见！"
-                show_log_path
-                exit 0
-                ;;
+            0) return ;;
+            *) log_warn "无效输入，请重新选择"; sleep 1 ;;
+        esac
+    done
+}
+
+# ============================ 二级菜单: 服务部署 ============================
+menu_service_deploy() {
+    while true; do
+        print_header
+        echo -e "  ${BOLD}服务部署${NC}"
+        echo -e "  ${DIM}Compose 服务:$(check_compose_deployed)${NC}"
+        print_line
+        echo ""
+        echo -e "  请选择操作:"
+        echo ""
+        echo -e "    ${CYAN}[1]${NC}  Docker Compose 部署    ${DIM}(启动/停止/重启/日志/手动操作)${NC}"
+        echo -e "    ${CYAN}[2]${NC}  修改服务配置          ${DIM}(集中修改 DB/Redis/ESL/VIP 配置)${NC}"
+        echo ""
+        echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
+        echo ""
+
+        read_choice "请输入序号: " ""
+        choice="$REPLY"
+
+        case "$choice" in
+            1) menu_compose ;;
+            2) menu_update_config ;;
+            0) return ;;
+            *) log_warn "无效输入，请重新选择"; sleep 1 ;;
+        esac
+    done
+}
+
+# ============================ 二级菜单: 运维工具 ============================
+menu_ops_tools() {
+    while true; do
+        print_header
+        echo -e "  ${BOLD}运维工具${NC}"
+        print_line
+        echo ""
+        echo -e "  请选择操作:"
+        echo ""
+        echo -e "    ${CYAN}[1]${NC}  离线包准备            ${DIM}(下载 deb 包 + 导出镜像 + sipmon 二进制)${NC}"
+        echo -e "    ${CYAN}[2]${NC}  卸载管理              ${DIM}(分组件卸载 / 一键全部卸载)${NC}"
+        echo -e "    ${CYAN}[3]${NC}  SIP 抓包工具 (sipmon)  ${DIM}(在线/离线安装)${NC}"
+        echo -e "    ${CYAN}[4]${NC}  SIP 抓包工具 (sngrep)  ${DIM}(在线/离线安装)${NC}"
+        echo ""
+        echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
+        echo ""
+
+        read_choice "请输入序号: " ""
+        choice="$REPLY"
+
+        case "$choice" in
+            1) menu_offline_prepare ;;
+            2) menu_uninstall ;;
+            3) menu_sipmon ;;
+            4) menu_sngrep ;;
+            0) return ;;
             *) log_warn "无效输入，请重新选择"; sleep 1 ;;
         esac
     done
@@ -430,18 +516,42 @@ menu_compose() {
         echo -e "  ${DIM}当前状态:$(check_compose_deployed)${NC}"
         print_line
         echo ""
+        echo -e "  请选择分类:"
+        echo ""
+        echo -e "    ${CYAN}[1]${NC}  服务管理    ${DIM}(启动 / 停止 / 重启)${NC}"
+        echo -e "    ${CYAN}[2]${NC}  状态查看    ${DIM}(状态 / 日志 / 健康检查)${NC}"
+        echo -e "    ${CYAN}[3]${NC}  手动操作    ${DIM}(初始化模板 / 拉取镜像 / 解压配置)${NC}"
+        echo ""
+        echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
+        echo ""
+
+        read_choice "请输入序号: " ""
+        choice="$REPLY"
+
+        case "$choice" in
+            1) menu_compose_service ;;
+            2) menu_compose_status ;;
+            3) menu_compose_manual ;;
+            0) return ;;
+            *) log_warn "无效输入"; sleep 1 ;;
+        esac
+    done
+}
+
+# ============================ Compose 二级菜单: 服务管理 ============================
+menu_compose_service() {
+    while true; do
+        print_header
+        echo -e "  ${BOLD}Docker Compose 部署 > 服务管理${NC}"
+        echo -e "  ${DIM}当前状态:$(check_compose_deployed)${NC}"
+        print_line
+        echo ""
         echo -e "  请选择操作:"
         echo ""
         echo -e "    ${CYAN}[1]${NC}  部署/启动服务    ${DIM}(docker compose up -d)${NC}"
         echo -e "    ${CYAN}[2]${NC}  停止服务          ${DIM}(docker compose down)${NC}"
         echo -e "    ${CYAN}[3]${NC}  停止容器          ${DIM}(docker compose stop, 不删除容器)${NC}"
         echo -e "    ${CYAN}[4]${NC}  重启服务          ${DIM}(docker compose restart)${NC}"
-        echo -e "    ${CYAN}[5]${NC}  查看服务状态      ${DIM}(docker compose ps)${NC}"
-        echo -e "    ${CYAN}[6]${NC}  查看服务日志      ${DIM}(docker compose logs)${NC}"
-        echo -e "    ${CYAN}[7]${NC}  容器健康检查      ${DIM}(检查容器健康状态)${NC}"
-        echo -e "    ${CYAN}[8]${NC}  初始化模板        ${DIM}(从模板生成 docker-compose.yml)${NC}"
-        echo -e "    ${CYAN}[9]${NC}  拉取镜像          ${DIM}(docker compose pull)${NC}"
-        echo -e "    ${CYAN}[10]${NC} 解压配置文件      ${DIM}(解压 config.zip 到 /data/config)${NC}"
         echo ""
         echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
         echo ""
@@ -486,13 +596,40 @@ menu_compose() {
                 fi
                 return
                 ;;
-            5)
+            0) return ;;
+            *) log_warn "无效输入"; sleep 1 ;;
+        esac
+    done
+}
+
+# ============================ Compose 二级菜单: 状态查看 ============================
+menu_compose_status() {
+    while true; do
+        print_header
+        echo -e "  ${BOLD}Docker Compose 部署 > 状态查看${NC}"
+        echo -e "  ${DIM}当前状态:$(check_compose_deployed)${NC}"
+        print_line
+        echo ""
+        echo -e "  请选择操作:"
+        echo ""
+        echo -e "    ${CYAN}[1]${NC}  查看服务状态    ${DIM}(docker compose ps)${NC}"
+        echo -e "    ${CYAN}[2]${NC}  查看服务日志    ${DIM}(docker compose logs)${NC}"
+        echo -e "    ${CYAN}[3]${NC}  容器健康检查    ${DIM}(检查容器健康状态)${NC}"
+        echo ""
+        echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
+        echo ""
+
+        read_choice "请输入序号: " ""
+        choice="$REPLY"
+
+        case "$choice" in
+            1)
                 echo ""
                 bash "${SCRIPTS_DIR}/deploy-compose.sh" --status
                 pause_enter
                 return
                 ;;
-            6)
+            2)
                 echo ""
                 read -rp "输入服务名 (留空查看全部): " svc
                 if [[ -n "$svc" ]]; then
@@ -505,19 +642,46 @@ menu_compose() {
                 pause_enter
                 return
                 ;;
-            7)
+            3)
                 echo ""
                 check_container_health 60 /data/docker-compose.yml || true
                 pause_enter
                 return
                 ;;
-            8)
+            0) return ;;
+            *) log_warn "无效输入"; sleep 1 ;;
+        esac
+    done
+}
+
+# ============================ Compose 二级菜单: 手动操作 ============================
+menu_compose_manual() {
+    while true; do
+        print_header
+        echo -e "  ${BOLD}Docker Compose 部署 > 手动操作${NC}"
+        echo -e "  ${DIM}部署/启动服务时会自动检查, 一般无需手动执行${NC}"
+        print_line
+        echo ""
+        echo -e "  请选择操作:"
+        echo ""
+        echo -e "    ${CYAN}[1]${NC}  初始化模板    ${DIM}(从模板生成 docker-compose.yml)${NC}"
+        echo -e "    ${CYAN}[2]${NC}  拉取镜像      ${DIM}(docker compose pull)${NC}"
+        echo -e "    ${CYAN}[3]${NC}  解压配置文件  ${DIM}(解压 config.zip 到 /data/config)${NC}"
+        echo ""
+        echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
+        echo ""
+
+        read_choice "请输入序号: " ""
+        choice="$REPLY"
+
+        case "$choice" in
+            1)
                 echo ""
                 bash "${SCRIPTS_DIR}/deploy-compose.sh" --init
                 pause_enter
                 return
                 ;;
-            9)
+            2)
                 echo ""
                 if confirm "确认拉取所有镜像？"; then
                     bash "${SCRIPTS_DIR}/deploy-compose.sh" --pull
@@ -525,7 +689,7 @@ menu_compose() {
                 fi
                 return
                 ;;
-            10)
+            3)
                 echo ""
                 if confirm "确认解压 config.zip 到 /data/config？"; then
                     bash "${SCRIPTS_DIR}/deploy-compose.sh" --extract-config
@@ -838,6 +1002,9 @@ uninstall_all_menu() {
     read -rp "$(echo -e "${RED}确认全部卸载？输入 yes 继续: ${NC}")" ans
     [[ "$ans" == "yes" ]] || { log_info "已取消"; pause_enter; return; }
 
+    echo ""
+    log_info "开始执行全部卸载 ..."
+
     # 卸载前备份配置 (仅备份配置，不备份数据)
     backup_before_deploy "before-uninstall-all" || true
 
@@ -880,7 +1047,7 @@ uninstall_all_menu() {
     log_info "步骤 4/4: 卸载 Docker"
     print_line
     if command -v docker &>/dev/null; then
-        bash "${SCRIPTS_DIR}/uninstall-docker.sh" --purge --clean-images
+        bash "${SCRIPTS_DIR}/uninstall-docker.sh" --purge --clean-images --yes
     else
         log_info "Docker 未安装，跳过"
     fi
@@ -951,6 +1118,65 @@ menu_sipmon() {
     done
 }
 
+# ============================ SIP 抓包工具 (sngrep) 子菜单 ============================
+menu_sngrep() {
+    while true; do
+        print_header
+        echo -e "  ${BOLD}SIP 抓包工具 (sngrep)${NC}"
+        echo -e "  ${DIM}当前状态:$(check_sngrep)${NC}"
+        echo -e "  ${DIM}SIP 信令抓包分析 (ncurses TUI), Ubuntu 官方仓库安装${NC}"
+        print_line
+        echo ""
+        echo -e "  请选择操作:"
+        echo ""
+        echo -e "    ${CYAN}[1]${NC}  在线安装    ${DIM}(apt 安装 sngrep)${NC}"
+        echo -e "    ${CYAN}[2]${NC}  离线安装    ${DIM}(从本地 .deb 包安装)${NC}"
+        echo -e "    ${CYAN}[3]${NC}  卸载        ${DIM}(apt remove sngrep)${NC}"
+        echo -e "    ${CYAN}[4]${NC}  查看状态    ${DIM}(显示版本与常用命令)${NC}"
+        echo ""
+        echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
+        echo ""
+
+        read_choice "请输入序号: " ""
+        choice="$REPLY"
+
+        case "$choice" in
+            1)
+                echo ""
+                if confirm "确认在线安装 sngrep？"; then
+                    bash "${SCRIPTS_DIR}/install-sngrep.sh" --online
+                    pause_enter
+                fi
+                return
+                ;;
+            2)
+                echo ""
+                if confirm "确认离线安装 sngrep？"; then
+                    bash "${SCRIPTS_DIR}/install-sngrep.sh" --offline
+                    pause_enter
+                fi
+                return
+                ;;
+            3)
+                echo ""
+                if confirm "确认卸载 sngrep？"; then
+                    bash "${SCRIPTS_DIR}/install-sngrep.sh" --uninstall
+                    pause_enter
+                fi
+                return
+                ;;
+            4)
+                echo ""
+                bash "${SCRIPTS_DIR}/install-sngrep.sh" --status
+                pause_enter
+                return
+                ;;
+            0) return ;;
+            *) log_warn "无效输入"; sleep 1 ;;
+        esac
+    done
+}
+
 # ============================ 离线包准备子菜单 ============================
 menu_offline_prepare() {
     print_header
@@ -961,6 +1187,7 @@ menu_offline_prepare() {
     echo -e "  将下载以下内容:"
     echo -e "    ${DIM}- Docker CE 全套 .deb 包 (含依赖)${NC}"
     echo -e "    ${DIM}- Keepalived .deb 包${NC}"
+    echo -e "    ${DIM}- sngrep .deb 包 (含依赖)${NC}"
     echo -e "    ${DIM}- Docker 镜像 (docker save 导出)${NC}"
     echo -e "    ${DIM}- sipmon 抓包工具静态二进制${NC}"
     echo -e "    ${DIM}- daemon.json 模板${NC}"

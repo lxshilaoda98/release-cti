@@ -117,29 +117,67 @@ confirm() {
 }
 
 # ============================ 菜单选择读取 ============================
-# 支持 ESC 键返回 (ESC + 回车 = 返回), 退格正常工作
+# 逐字符读取, 支持:
+#   - 单独按 ESC 立即返回 0 (无需回车)
+#   - ESC + 回车 同样返回 0 (兼容旧习惯/管道输入)
+#   - 方向键等转义序列自动忽略
+#   - 数字逐字符回显, 退格可删除, 回车确认 (支持多位数字)
 # 参数: $1 = 提示语, $2 = 默认值 (可选)
 # 结果写入全局变量 REPLY
 read_choice() {
     local prompt="$1"
     local default="${2:-}"
+    local input="" c seq
 
-    read -rp "$(echo -e "${BOLD}${prompt}${NC}")" input
+    echo -en "${BOLD}${prompt}${NC}"
 
-    # ESC 键 -> 返回 0 (用户按 ESC 后回车, input 以 \x1b 开头)
-    if [[ "${input:0:1}" == $'\x1b' ]]; then
-        REPLY="0"
-        return 0
-    fi
+    while true; do
+        # 读一个字符; EOF (管道结束) 时用已输入内容/默认值结束
+        if ! IFS= read -rsn1 c; then
+            echo ""
+            REPLY="${input:-$default}"
+            return 0
+        fi
 
-    # 回车 -> 使用默认值
-    if [[ -z "$input" ]]; then
-        REPLY="${default}"
-        return 0
-    fi
-
-    REPLY="$input"
-    return 0
+        case "$c" in
+            $'\x1b')
+                # 50ms 内读后续字节, 区分 单独ESC / ESC+回车 / 转义序列(方向键)
+                seq=""
+                if IFS= read -rsn1 -t 0.05 seq 2>/dev/null; then
+                    if [[ -z "$seq" ]]; then
+                        # ESC + 回车
+                        echo ""
+                        REPLY="0"
+                        return 0
+                    fi
+                    # 转义序列 (如 ESC [ A), 吞掉剩余字节后忽略
+                    while IFS= read -rsn1 -t 0.05 seq 2>/dev/null && [[ -n "$seq" ]]; do :; done
+                    continue
+                fi
+                # 超时无后续字节 = 单独按 ESC
+                echo ""
+                REPLY="0"
+                return 0
+                ;;
+            "")
+                # 回车: 确认输入
+                echo ""
+                REPLY="${input:-$default}"
+                return 0
+                ;;
+            $'\x7f'|$'\x08')
+                # 退格: 删除一个字符
+                if [[ -n "$input" ]]; then
+                    input="${input%?}"
+                    echo -en "\b \b"
+                fi
+                ;;
+            *)
+                input+="$c"
+                echo -n "$c"
+                ;;
+        esac
+    done
 }
 
 # ============================ 部署前备份 ============================
@@ -172,6 +210,7 @@ backup_before_deploy() {
 
     # 备份 config 目录
     if [[ -d /data/config ]]; then
+        log_info "正在备份 config 目录 (目录较大时可能需要几分钟) ..."
         cp -r /data/config "$backup_dir/" 2>/dev/null || true
         backed_up=1
     fi

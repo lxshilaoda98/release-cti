@@ -6,9 +6,10 @@
 # 生成内容:
 #   1. Docker CE 全套 .deb 包 (含依赖)
 #   2. Keepalived .deb 包 (含依赖)
-#   3. Docker 镜像 (docker save 导出为 tar)
-#   4. sipmon 抓包工具静态二进制 (GitHub Releases)
-#   5. daemon.json 模板
+#   3. sngrep .deb 包 (含依赖)
+#   4. Docker 镜像 (docker save 导出为 tar)
+#   5. sipmon 抓包工具静态二进制 (GitHub Releases)
+#   6. daemon.json 模板
 #
 # 用法:
 #   ./prepare-offline.sh                          # 默认输出到 /data/offline-bundle
@@ -166,6 +167,25 @@ export_docker_images() {
     log_info "镜像导出完成: 成功 $((total - failed))/${total}"
 }
 
+# ============================ 下载 sngrep 包 ============================
+download_sngrep_packages() {
+    log_step "下载 sngrep .deb 包"
+
+    # 独立子目录: sngrep 依赖树完整放在一起, 离线安装时整目录 dpkg
+    local pkg_dir="${OUTPUT_DIR}/packages/sngrep"
+    mkdir -p "$pkg_dir"
+
+    log_info "下载 sngrep 及依赖 ..."
+    cd "$pkg_dir"
+    apt-get download $(apt-cache depends --recurse --no-recommends --no-suggests \
+        --no-conflicts --no-breaks --no-replaces --no-enhances \
+        sngrep 2>/dev/null | grep "^\w" | sort -u) 2>/dev/null || true
+
+    local sg_count
+    sg_count=$(find "$pkg_dir" -name '*.deb' | wc -l | tr -d ' ')
+    log_info "sngrep 包下载完成: ${sg_count} 个 .deb 文件 (含全部依赖)"
+}
+
 # ============================ 下载 sipmon 二进制 ============================
 download_sipmon() {
     log_step "下载 sipmon 抓包工具"
@@ -264,7 +284,7 @@ generate_readme() {
 使用方法:
   1. 将本目录拷贝到目标服务器的 /data/ 下
   2. 在目标服务器执行: ./deploy.sh
-  3. 选择 [1] Docker 安装 -> [1] 离线安装
+  3. 选择: 环境安装 -> Docker 安装 -> 离线安装
   4. 离线包目录指向: /data/offline-bundle/packages
 
 加载镜像:
@@ -274,7 +294,10 @@ generate_readme() {
 
 安装 sipmon 抓包工具:
   ./scripts/install-sipmon.sh --offline --pkg-dir /data/offline-bundle/images
-  (或在 deploy.sh 菜单选择 [9] -> [2] 离线安装)
+  (或在 deploy.sh 菜单选择: 运维工具 -> SIP 抓包工具 -> 离线安装)
+
+安装 sngrep 抓包工具:
+  ./scripts/install-sngrep.sh --offline --pkg-dir /data/offline-bundle/packages/sngrep
 
 ============================================================
 EOF
@@ -305,6 +328,7 @@ main() {
     if [[ "$SKIP_PACKAGES" == false ]]; then
         download_docker_packages
         download_keepalived_packages
+        download_sngrep_packages
         download_sipmon
     else
         log_info "跳过包下载 (--skip-packages)"
