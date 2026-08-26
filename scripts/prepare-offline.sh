@@ -210,7 +210,7 @@ download_tools_packages() {
     local pkg_dir="${OUTPUT_DIR}/packages/tools"
     mkdir -p "$pkg_dir"
 
-    local tools="sip-tester sipsak mtr iftop nethogs lnav jq htop iotop"
+    local tools="sip-tester sipsak mtr iftop nethogs lnav jq htop iotop ipset iptables"
 
     apt_ensure_universe
     apt-get update -qq

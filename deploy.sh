@@ -11,7 +11,7 @@
 #   [1] 一键全量部署
 #   [2] 环境安装    (Docker / Keepalived / 自签证书 / chrony / 内核调优 / fail2ban)
 #   [3] 服务部署    (Docker Compose 部署 / 修改服务配置)
-#   [4] 运维工具    (离线包准备 / 卸载管理 / sipmon / sngrep / 运维工具包)
+#   [4] 运维工具    (离线包准备 / 卸载管理 / 抓包工具 / 工具包 / 海外封禁)
 #
 # 远程模式通过跳板机 SSH 连接目标服务器，自动推送脚本并执行。
 # 连接配置见 config/remote.conf
@@ -157,7 +157,7 @@ check_fail2ban() {
 
 # 状态检测: 运维工具包
 check_tools() {
-    local tools=(sip-tester sipsak mtr iftop nethogs lnav jq htop iotop)
+    local tools=(sip-tester sipsak mtr iftop nethogs lnav jq htop iotop ipset iptables)
     local installed=0 t
     for t in "${tools[@]}"; do
         dpkg -s "$t" &>/dev/null 2>&1 && installed=$((installed + 1))
@@ -348,10 +348,13 @@ menu_chrony() {
         echo ""
         echo -e "  请选择操作:"
         echo ""
-        echo -e "    ${CYAN}[1]${NC}  在线安装    ${DIM}(apt 安装 chrony + 配置 NTP 源)${NC}"
-        echo -e "    ${CYAN}[2]${NC}  离线安装    ${DIM}(从本地 .deb 包安装)${NC}"
-        echo -e "    ${CYAN}[3]${NC}  卸载        ${DIM}(apt remove chrony)${NC}"
-        echo -e "    ${CYAN}[4]${NC}  查看状态    ${DIM}(时间源 / 偏移量 / 同步状态)${NC}"
+        echo -e "    ${CYAN}[1]${NC}  在线安装        ${DIM}(apt 安装 chrony + 配置 NTP 源)${NC}"
+        echo -e "    ${CYAN}[2]${NC}  离线安装        ${DIM}(从本地 .deb 包安装)${NC}"
+        echo -e "    ${CYAN}[3]${NC}  卸载            ${DIM}(apt remove chrony)${NC}"
+        echo -e "    ${CYAN}[4]${NC}  查看状态        ${DIM}(时间源 / 偏移量 / 同步状态)${NC}"
+        echo -e "    ${CYAN}[5]${NC}  设置时区          ${DIM}(默认 Asia/Shanghai)${NC}"
+        echo -e "    ${CYAN}[6]${NC}  本地 NTP 服务      ${DIM}(允许内网网段从本机同步时间)${NC}"
+        echo -e "    ${CYAN}[7]${NC}  上游 NTP 服务器    ${DIM}(本机从指定服务器同步, 可输多个)${NC}"
         echo ""
         echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
         echo ""
@@ -390,6 +393,45 @@ menu_chrony() {
                 pause_enter
                 return
                 ;;
+            5)
+                echo ""
+                read -rp "输入时区 [默认 Asia/Shanghai]: " tz
+                tz="${tz:-Asia/Shanghai}"
+                bash "${SCRIPTS_DIR}/install-chrony.sh" --config --timezone "$tz"
+                pause_enter
+                return
+                ;;
+            6)
+                echo ""
+                echo -e "  ${DIM}本机将作为 NTP 服务器, 输入允许同步的内网网段 (CIDR)${NC}"
+                echo -e "  ${DIM}注意: 会重写 chrony.conf; 多网段请用命令行多次 --allow${NC}"
+                read -rp "输入网段 (如 10.160.4.0/24): " cidr
+                if [[ -z "$cidr" ]]; then
+                    log_info "已取消"
+                else
+                    bash "${SCRIPTS_DIR}/install-chrony.sh" --config --allow "$cidr"
+                fi
+                pause_enter
+                return
+                ;;
+            7)
+                echo ""
+                echo -e "  ${DIM}本机将从指定的 NTP 服务器同步时间 (替代公共源)${NC}"
+                echo -e "  ${DIM}多个服务器用空格分隔, 如: 10.160.4.88 10.160.4.89${NC}"
+                read -rp "输入 NTP 服务器 IP: " ntp_ips
+                if [[ -z "$ntp_ips" ]]; then
+                    log_info "已取消"
+                else
+                    local srv_args=""
+                    local ip
+                    for ip in $ntp_ips; do
+                        srv_args="$srv_args --server $ip"
+                    done
+                    bash "${SCRIPTS_DIR}/install-chrony.sh" --config $srv_args
+                fi
+                pause_enter
+                return
+                ;;
             0) return ;;
             *) log_warn "无效输入"; sleep 1 ;;
         esac
@@ -416,6 +458,251 @@ menu_sysctl() {
     return
 }
 
+# ----- fail2ban 选择 jail (结果写入 F2B_JAIL, 失败返回 1) -----
+_f2b_pick_jail() {
+    if ! command -v fail2ban-client &>/dev/null; then
+        log_warn "fail2ban 未安装"
+        return 1
+    fi
+
+    local jails
+    jails=$(fail2ban-client status 2>/dev/null | grep "Jail list" | sed 's/.*://; s/,//g' || true)
+    if [[ -z "$jails" ]]; then
+        log_warn "fail2ban 未运行或没有启用的 jail"
+        return 1
+    fi
+
+    echo -e "  请选择 jail:"
+    local jail_arr=($jails)
+    local i=1 j
+    for j in "${jail_arr[@]}"; do
+        echo -e "    ${CYAN}[$i]${NC}  $j"
+        i=$((i + 1))
+    done
+    echo ""
+
+    read_choice "请输入序号: " ""
+    local idx="$REPLY"
+    [[ "$idx" == "0" || -z "$idx" ]] && return 1
+    if ! [[ "$idx" =~ ^[0-9]+$ ]] || [[ $idx -lt 1 || $idx -gt ${#jail_arr[@]} ]]; then
+        log_warn "无效输入"
+        return 1
+    fi
+    F2B_JAIL="${jail_arr[$((idx - 1))]}"
+    return 0
+}
+
+# ----- fail2ban 手动封禁/解封 -----
+# 参数: $1 = banip / unbanip, $2 = 中文动作名
+f2b_set_ip() {
+    local action="$1"
+    local action_zh="$2"
+
+    _f2b_pick_jail || return
+    local jail="$F2B_JAIL"
+
+    read -rp "输入 IP 地址: " ip
+    [[ -z "$ip" ]] && { log_info "已取消"; return; }
+
+    echo ""
+    if fail2ban-client set "$jail" "$action" "$ip" 2>&1 | sed 's/^/    /'; then
+        log_ok "已在 jail [${jail}] ${action_zh}: ${ip}"
+    else
+        log_error "操作失败，请检查 IP 格式和 jail 状态"
+    fi
+}
+
+# ----- fail2ban 从文件批量封禁 -----
+f2b_ban_file() {
+    _f2b_pick_jail || return
+    local jail="$F2B_JAIL"
+
+    echo -e "  请选择 IP 列表来源:"
+    echo -e "    ${CYAN}[1]${NC}  本地文件      ${DIM}(一行一个 IP)${NC}"
+    echo -e "    ${CYAN}[2]${NC}  在线下载      ${DIM}(输入 URL 获取 IP 列表)${NC}"
+    echo ""
+    read_choice "请输入序号 [默认 1]: " "1"
+
+    local file="" tmp_file="" url=""
+    case "$REPLY" in
+        1)
+            echo ""
+            read -rp "输入 IP 列表文件路径: " file
+            [[ -z "$file" ]] && { log_info "已取消"; return; }
+            ;;
+        2)
+            echo ""
+            read -rp "输入 IP 列表 URL: " url
+            [[ -z "$url" ]] && { log_info "已取消"; return; }
+            log_info "下载: ${url}"
+            tmp_file=$(mktemp)
+            if ! curl -fsSL --connect-timeout 15 -o "$tmp_file" "$url"; then
+                rm -f "$tmp_file"
+                log_error "下载失败，请检查 URL 或网络"
+                return
+            fi
+            file="$tmp_file"
+            log_ok "下载完成 ($(wc -l < "$file" | tr -d ' ') 行)"
+            ;;
+        0) return ;;
+        *) log_warn "无效输入"; return ;;
+    esac
+
+    if [[ ! -f "$file" ]]; then
+        log_error "文件不存在: $file"
+        return
+    fi
+
+    local total=0 ok=0 fail=0 ip
+    while IFS= read -r ip; do
+        # 去掉空白, 跳过空行和注释
+        ip=$(echo "$ip" | tr -d '[:space:]')
+        [[ -z "$ip" || "$ip" == \#* ]] && continue
+        total=$((total + 1))
+        if fail2ban-client set "$jail" banip "$ip" &>/dev/null; then
+            ok=$((ok + 1))
+        else
+            fail=$((fail + 1))
+            log_warn "  封禁失败: ${ip}"
+        fi
+    done < "$file"
+
+    [[ -n "$tmp_file" ]] && rm -f "$tmp_file"
+
+    echo ""
+    if [[ $total -eq 0 ]]; then
+        log_warn "文件中没有有效 IP"
+        return
+    fi
+    log_ok "批量封禁完成: 成功 ${ok}/${total} (jail: ${jail})"
+    [[ $fail -gt 0 ]] && log_warn "失败 ${fail} 个 (IP 格式错误或已存在)"
+}
+
+# 状态检测: 海外 IP 封禁
+check_geoblock() {
+    if iptables -S GEO-SIP &>/dev/null 2>&1; then
+        local cnt
+        cnt=$(ipset list china 2>/dev/null | grep -c "^[0-9]" || echo "?")
+        echo -e "${GREEN}✓ 已启用 (${cnt} 条网段)${NC}"
+    else
+        echo -e "${RED}✗ 未启用${NC}"
+    fi
+}
+
+# ============================ 三级菜单: 海外 IP 封禁 ============================
+menu_geoblock() {
+    while true; do
+        print_header
+        echo -e "  ${BOLD}运维工具 > 海外 IP 封禁 (Geo-IP)${NC}"
+        echo -e "  ${DIM}当前状态:$(check_geoblock)${NC}"
+        echo -e "  ${DIM}保护端口仅放行 中国 IP + 内网 + 自定义放行 IP, 其余丢弃${NC}"
+        print_line
+        echo ""
+        echo -e "  请选择操作:"
+        echo ""
+        echo -e "    ${CYAN}[1]${NC}  获取中国 IP 列表  ${DIM}(在线下载到 /data/config/geoip)${NC}"
+        echo -e "    ${CYAN}[2]${NC}  导入本地 IP 列表  ${DIM}(离线环境从文件导入)${NC}"
+        echo -e "    ${CYAN}[3]${NC}  启用封禁          ${DIM}(ipset + iptables 生效 + 开机自启)${NC}"
+        echo -e "    ${CYAN}[4]${NC}  关闭封禁          ${DIM}(移除规则, 列表文件保留)${NC}"
+        echo -e "    ${CYAN}[5]${NC}  查看状态          ${DIM}(规则 / 放行IP / 端口 / 命中统计)${NC}"
+        echo -e "    ${CYAN}[6]${NC}  添加放行 IP       ${DIM}(额外白名单, 即时生效)${NC}"
+        echo -e "    ${CYAN}[7]${NC}  移除放行 IP       ${DIM}(从额外白名单删除)${NC}"
+        echo -e "    ${CYAN}[8]${NC}  添加保护端口      ${DIM}(默认 5060/5061)${NC}"
+        echo -e "    ${CYAN}[9]${NC}  移除保护端口      ${DIM}(从保护列表删除)${NC}"
+        echo ""
+        echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
+        echo ""
+
+        read_choice "请输入序号: " ""
+        choice="$REPLY"
+
+        case "$choice" in
+            1)
+                echo ""
+                bash "${SCRIPTS_DIR}/geo-block.sh" --fetch
+                pause_enter
+                return
+                ;;
+            2)
+                echo ""
+                read -rp "输入 IP 列表文件路径 [默认 /data/config/geoip/china-ip.txt]: " geo_file
+                geo_file="${geo_file:-/data/config/geoip/china-ip.txt}"
+                bash "${SCRIPTS_DIR}/geo-block.sh" --import "$geo_file"
+                pause_enter
+                return
+                ;;
+            3)
+                echo ""
+                if confirm "确认启用海外 IP 封禁? (保护端口仅中国 IP 可访问)"; then
+                    bash "${SCRIPTS_DIR}/geo-block.sh" --apply
+                    pause_enter
+                fi
+                return
+                ;;
+            4)
+                echo ""
+                if confirm "确认关闭海外 IP 封禁？"; then
+                    bash "${SCRIPTS_DIR}/geo-block.sh" --unblock
+                    pause_enter
+                fi
+                return
+                ;;
+            5)
+                echo ""
+                bash "${SCRIPTS_DIR}/geo-block.sh" --status
+                pause_enter
+                return
+                ;;
+            6)
+                echo ""
+                read -rp "输入要放行的 IP (支持 CIDR, 如 8.8.8.8 或 8.8.8.0/24): " allow_ip
+                if [[ -n "$allow_ip" ]]; then
+                    bash "${SCRIPTS_DIR}/geo-block.sh" --allow-ip "$allow_ip"
+                else
+                    log_info "已取消"
+                fi
+                pause_enter
+                return
+                ;;
+            7)
+                echo ""
+                read -rp "输入要移除的放行 IP: " remove_ip
+                if [[ -n "$remove_ip" ]]; then
+                    bash "${SCRIPTS_DIR}/geo-block.sh" --remove-ip "$remove_ip"
+                else
+                    log_info "已取消"
+                fi
+                pause_enter
+                return
+                ;;
+            8)
+                echo ""
+                read -rp "输入要保护的端口 (如 5080): " add_port
+                if [[ -n "$add_port" ]]; then
+                    bash "${SCRIPTS_DIR}/geo-block.sh" --add-port "$add_port"
+                else
+                    log_info "已取消"
+                fi
+                pause_enter
+                return
+                ;;
+            9)
+                echo ""
+                read -rp "输入要移除的保护端口: " rm_port
+                if [[ -n "$rm_port" ]]; then
+                    bash "${SCRIPTS_DIR}/geo-block.sh" --remove-port "$rm_port"
+                else
+                    log_info "已取消"
+                fi
+                pause_enter
+                return
+                ;;
+            0) return ;;
+            *) log_warn "无效输入"; sleep 1 ;;
+        esac
+    done
+}
+
 # ============================ 三级菜单: fail2ban 安全防护 ============================
 menu_fail2ban() {
     while true; do
@@ -431,6 +718,9 @@ menu_fail2ban() {
         echo -e "    ${CYAN}[2]${NC}  离线安装    ${DIM}(从本地 .deb 包安装)${NC}"
         echo -e "    ${CYAN}[3]${NC}  卸载        ${DIM}(apt remove fail2ban)${NC}"
         echo -e "    ${CYAN}[4]${NC}  查看状态    ${DIM}(运行状态 / 各 jail 封禁统计)${NC}"
+        echo -e "    ${CYAN}[5]${NC}  手动封禁 IP    ${DIM}(选择 jail, ban 指定 IP)${NC}"
+        echo -e "    ${CYAN}[6]${NC}  解除封禁 IP    ${DIM}(选择 jail, unban 指定 IP)${NC}"
+        echo -e "    ${CYAN}[7]${NC}  文件批量封禁    ${DIM}(从 IP 列表文件批量 ban)${NC}"
         echo ""
         echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
         echo ""
@@ -466,6 +756,24 @@ menu_fail2ban() {
             4)
                 echo ""
                 bash "${SCRIPTS_DIR}/install-fail2ban.sh" --status
+                pause_enter
+                return
+                ;;
+            5)
+                echo ""
+                f2b_set_ip "banip" "封禁"
+                pause_enter
+                return
+                ;;
+            6)
+                echo ""
+                f2b_set_ip "unbanip" "解除封禁"
+                pause_enter
+                return
+                ;;
+            7)
+                echo ""
+                f2b_ban_file
                 pause_enter
                 return
                 ;;
@@ -517,6 +825,7 @@ menu_ops_tools() {
         echo -e "    ${CYAN}[3]${NC}  SIP 抓包工具 (sipmon)  ${DIM}(在线/离线安装)${NC}"
         echo -e "    ${CYAN}[4]${NC}  SIP 抓包工具 (sngrep)  ${DIM}(在线/离线安装)${NC}"
         echo -e "    ${CYAN}[5]${NC}  常用运维工具包        ${DIM}(sipp/mtr/iftop/lnav/jq/htop 等)${NC}"
+        echo -e "    ${CYAN}[6]${NC}  海外 IP 封禁          ${DIM}(SIP 端口仅放行中国 IP)${NC}"
         echo ""
         echo -e "    ${DIM}[0] 返回 / [ESC] 返回${NC}"
         echo ""
@@ -530,6 +839,7 @@ menu_ops_tools() {
             3) menu_sipmon ;;
             4) menu_sngrep ;;
             5) menu_tools ;;
+            6) menu_geoblock ;;
             0) return ;;
             *) log_warn "无效输入，请重新选择"; sleep 1 ;;
         esac

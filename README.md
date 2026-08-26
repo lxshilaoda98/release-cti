@@ -24,6 +24,7 @@ release-cti/
     ├── install-chrony.sh             # chrony 时间同步 (在线/离线)
     ├── install-fail2ban.sh           # fail2ban 安全防护 (在线/离线)
     ├── tune-sysctl.sh                # 内核参数调优 (conntrack/UDP/句柄)
+    ├── geo-block.sh                  # 海外 IP 封禁 (ipset 中国白名单)
     ├── gen-cert.sh                   # 证书管理 (已有证书/自签IP证书)
     ├── deploy-compose.sh             # Compose 服务管理 (启停/镜像/配置)
     ├── update-config.sh              # 集中配置同步 (DB/Redis/ESL)
@@ -86,7 +87,8 @@ REMOTE_DIR="/data/deploy"
     ├── 卸载管理                分组件卸载 / 一键全部卸载
     ├── SIP 抓包工具 (sipmon)   在线/离线安装 sipmon
     ├── SIP 抓包工具 (sngrep)   在线/离线安装 sngrep
-    └── 常用运维工具包          sipp/sipsak/mtr/iftop/nethogs/lnav/jq/htop/iotop
+    ├── 常用运维工具包          sipp/sipsak/mtr/iftop/nethogs/lnav/jq/htop/iotop/ipset
+    └── 海外 IP 封禁            SIP 端口仅放行中国 IP (ipset 白名单)
 [0] 退出 / [ESC] 返回
 ```
 
@@ -279,6 +281,15 @@ VIP=""
 
 VoIP 双节点 HA 对时间敏感（CDR 话单 / RTP 时间戳 / 日志对齐）。安装 chrony 并配置国内 NTP 源（阿里/腾讯/清华）+ `local stratum 10` 内网兜底（无外网时本机可作时间源）。
 
+```bash
+./scripts/install-chrony.sh --online                      # 安装 + NTP 源 + 时区(Asia/Shanghai)
+./scripts/install-chrony.sh --config --timezone Asia/Shanghai   # 仅改时区
+./scripts/install-chrony.sh --config --allow 10.160.4.0/24      # 本机作为 NTP 服务器
+./scripts/install-chrony.sh --status                      # 时间源/偏移量/同步状态
+```
+
+**内网 NTP 服务器用法：** 时间源节点执行 `--config --allow <内网网段>`；其他节点把 `/etc/chrony/chrony.conf` 的 pool 指向时间源节点 IP（`pool 10.160.4.88 iburst`）即可。
+
 ### 内核参数调优 (`tune-sysctl.sh`)
 
 SIP 服务器经典坑（conntrack 表满丢包）预防，写入 `/etc/sysctl.d/99-cti-voip.conf` 并生效，原配置自动备份：
@@ -298,7 +309,42 @@ SIP 服务器经典坑（conntrack 表满丢包）预防，写入 `/etc/sysctl.d
 
 ### fail2ban 安全防护 (`install-fail2ban.sh`)
 
-SSH + SIP 防暴力破解。配置 `jail.local`：默认启用 sshd jail；检测到 `/data/logs/fs/`(FreeSWITCH 日志卷）存在时自动启用 freeswitch jail，监控 SIP 认证失败（5 次/10 分钟 → 封禁 1 小时）。
+SSH + SIP 防暴力破解。配置 `jail.local`：默认启用 sshd jail；检测到 `/data/logs/fs/`(FreeSWITCH 日志卷）存在时自动启用 freeswitch jail，监控 SIP 认证失败。
+
+**默认策略：** 10 分钟内失败 5 次 → **永久封禁**(`bantime = -1`)；内网网段（`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`）和本机已加入 `ignoreip` 白名单，永不封禁。
+
+**菜单内可直接封禁/解封 IP**（运维工具/环境安装 → fail2ban → [5]/[6])；[7] 文件批量封禁支持本地文件或在线 URL 下载 IP 列表（一行一个 IP，支持 `#` 注释），命令行等价操作：
+
+```bash
+fail2ban-client set sshd banip 1.2.3.4        # 手动封禁
+fail2ban-client set sshd unbanip 1.2.3.4      # 解除封禁
+fail2ban-client status freeswitch             # 查看某 jail 封禁列表
+fail2ban-client banned 1.2.3.4                # 查 IP 是否被封
+```
+
+**白名单（永不封禁）:** 默认已含内网网段；追加自定义 IP/网段请编辑 `/etc/fail2ban/jail.local` 的 `[DEFAULT]` 段 `ignoreip`，然后 `systemctl reload fail2ban`。
+
+### 海外 IP 封禁 (`geo-block.sh`)
+
+SIP 端口（5060/5061 UDP+TCP）仅放行中国 IP + 内网网段，其余全部丢弃。基于 ipset（约 7500 条中国网段，O(1) 匹配无性能损耗）+ iptables 专用链 `GEO-SIP`，仅影响 SIP 端口，SSH 等不受影响。
+
+```bash
+./scripts/geo-block.sh --fetch               # 在线获取中国 IP 列表 (支持 --proxy)
+./scripts/geo-block.sh --import china-ip.txt # 离线环境从文件导入
+./scripts/geo-block.sh --apply               # 启用封禁 (ipset+iptables+systemd 开机自启)
+./scripts/geo-block.sh --unblock             # 关闭封禁 (列表文件保留)
+./scripts/geo-block.sh --status              # 规则 / 放行IP / 端口 / 命中统计
+./scripts/geo-block.sh --allow-ip 8.8.8.8    # 额外放行 IP (支持 CIDR, 即时生效)
+./scripts/geo-block.sh --remove-ip 8.8.8.8   # 移除放行 IP
+./scripts/geo-block.sh --add-port 5080       # 添加保护端口 (默认 5060/5061)
+./scripts/geo-block.sh --remove-port 5080    # 移除保护端口
+```
+
+- IP 列表存于 `/data/config/geoip/china-ip.txt`；自定义放行 IP 存于 `allow-extra.txt`；保护端口存于 `protected-ports.txt`，改后即时重建规则
+- 内网三段（10/8、172.16/12、192.168/16）自动加入白名单
+- ipset/iptables 缺失时自动安装（在线 apt；离线自动用 `packages/tools` 里的 deb)
+- 与 fail2ban 互补：geo-block 挡海外流量，fail2ban 处理国内 IP 的行为封禁；已知恶意 IP 可用 fail2ban 菜单 [7] 批量封禁
+- 注意：FS 使用 host 网络模式，规则挂 INPUT 链直接生效
 
 ## 优化功能
 

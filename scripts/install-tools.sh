@@ -36,7 +36,7 @@ MODE=""
 PKG_DIR="/data/images"
 
 # 工具包清单 (apt 包名)
-TOOLS=(sip-tester sipsak mtr iftop nethogs lnav jq htop iotop)
+TOOLS=(sip-tester sipsak mtr iftop nethogs lnav jq htop iotop ipset iptables)
 
 # ============================ 参数解析 ============================
 parse_args() {

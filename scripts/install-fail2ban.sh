@@ -124,8 +124,10 @@ configure_jail() {
 # 注意: 不要改 jail.conf, 本文件优先级更高
 
 [DEFAULT]
-# 封禁 1 小时, 10 分钟内失败 5 次触发
-bantime  = 3600
+# 内网/本机永不封禁
+ignoreip = 127.0.0.1/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+# 永久封禁 (bantime -1), 10 分钟内失败 5 次触发
+bantime  = -1
 findtime = 600
 maxretry = 5
 
@@ -137,7 +139,10 @@ EOF
             cat << EOF
 
 [freeswitch]
+# mode=normal: 只统计 用户不存在 / 认证失败
+# (extra 模式会把正常的 401 auth challenge 也算作失败, 会误封正常话机)
 enabled  = true
+mode     = normal
 logpath  = ${FS_LOG_DIR}/freeswitch.log
 maxretry = 5
 EOF
@@ -213,16 +218,31 @@ do_status() {
     log_ok "已安装: $(fail2ban-client --version 2>/dev/null | head -1)"
     echo ""
 
+    # 配置文件位置
+    log_info "配置文件:"
+    echo "    jail 配置:    ${JAIL_CONF} $( [[ -f "$JAIL_CONF" ]] && echo '' || echo '(不存在)' )"
+    echo "    默认配置:     /etc/fail2ban/jail.conf (勿改, 用 jail.local 覆盖)"
+    echo "    过滤规则目录: /etc/fail2ban/filter.d/ (freeswitch.conf / asterisk.conf 等)"
+    echo ""
+
     if systemctl is-active fail2ban &>/dev/null; then
         fail2ban-client status 2>/dev/null | sed 's/^/    /'
         echo ""
-        # 各 jail 详情
+        # 各 jail 详情 (含封禁 IP 列表)
         local jails
         jails=$(fail2ban-client status 2>/dev/null | grep "Jail list" | sed 's/.*://; s/,//g' || true)
         local j
         for j in $jails; do
             log_info "jail [${j}]:"
-            fail2ban-client status "$j" 2>/dev/null | grep -E "Currently banned|Total banned|Currently failed" | sed 's/^/    /' || true
+            fail2ban-client status "$j" 2>/dev/null | grep -E "Currently failed|Currently banned|Total banned" | sed 's/^/    /' || true
+            # 当前封禁的 IP 列表
+            local banned
+            banned=$(fail2ban-client status "$j" 2>/dev/null | grep "Banned IP list" | sed 's/.*://; s/^ *//' || true)
+            if [[ -n "$banned" ]]; then
+                echo -e "    ${RED}已封禁 IP: ${banned}${NC}"
+            else
+                echo -e "    ${DIM}已封禁 IP: (无)${NC}"
+            fi
         done
     else
         log_warn "fail2ban 服务未运行"

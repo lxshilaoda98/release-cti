@@ -9,8 +9,20 @@
 # 用法:
 #   在线安装:  ./install-chrony.sh --online
 #   离线安装:  ./install-chrony.sh --offline [--pkg-dir /data/images]
+#   仅重新配置: ./install-chrony.sh --config [--timezone TZ] [--allow CIDR]
 #   卸载:      ./install-chrony.sh --uninstall
 #   查看状态:  ./install-chrony.sh --status
+#
+# 可选参数:
+#   --timezone TZ    系统时区        (默认 Asia/Shanghai)
+#   --allow    CIDR  允许同步的网段  (本机作为 NTP 服务器, 可多次指定)
+#                    例: --allow 10.160.4.0/24
+#   --server   IP    上游 NTP 服务器 (本机从它同步, 替代公共源, 可多次指定)
+#                    例: --server 10.160.4.88
+#
+# 内网 NTP 用法:
+#   时间源节点:  ./install-chrony.sh --online --allow 10.160.4.0/24
+#   其他节点:    ./install-chrony.sh --config --server <时间源节点IP>
 #
 ###############################################################################
 set -euo pipefail
@@ -23,6 +35,10 @@ source "${SCRIPT_DIR}/lib/common.sh"
 MODE=""
 PKG_DIR="/data/images"
 CHRONY_CONF="/etc/chrony/chrony.conf"
+TIMEZONE="Asia/Shanghai"
+TZ_EXPLICIT=false
+ALLOW_NETS=()
+NTP_SERVERS=()
 
 # 国内公共 NTP 源
 NTP_POOLS=(
@@ -37,16 +53,20 @@ parse_args() {
         case "$1" in
             --online)    MODE="online";    shift ;;
             --offline)   MODE="offline";   shift ;;
+            --config)    MODE="config";    shift ;;
             --uninstall) MODE="uninstall"; shift ;;
             --status)    MODE="status";    shift ;;
             --pkg-dir)   PKG_DIR="$2";     shift 2 ;;
-            -h|--help)   grep '^#' "$0" | head -18; exit 0 ;;
+            --timezone)  TIMEZONE="$2"; TZ_EXPLICIT=true; shift 2 ;;
+            --allow)     ALLOW_NETS+=("$2"); shift 2 ;;
+            --server)    NTP_SERVERS+=("$2"); shift 2 ;;
+            -h|--help)   grep '^#' "$0" | head -28; exit 0 ;;
             *)           log_error "未知参数: $1"; exit 1 ;;
         esac
     done
 
     if [[ -z "$MODE" ]]; then
-        log_error "请指定操作: --online / --offline / --uninstall / --status"
+        log_error "请指定操作: --online / --offline / --config / --uninstall / --status"
         exit 1
     fi
 }
@@ -73,6 +93,12 @@ preflight_check() {
             systemctl stop systemd-timesyncd 2>/dev/null || true
             systemctl disable systemd-timesyncd 2>/dev/null || true
         fi
+    fi
+
+    # 仅重新配置模式: 要求已安装
+    if [[ "$MODE" == "config" ]] && ! command -v chronyd &>/dev/null; then
+        log_error "chrony 未安装，请先执行 --online 或 --offline 安装"
+        exit 1
     fi
 }
 
@@ -127,21 +153,75 @@ configure_chrony() {
 
     backup_file "$CHRONY_CONF"
 
-    cat > "$CHRONY_CONF" << EOF
+    {
+        if [[ ${#NTP_SERVERS[@]} -gt 0 ]]; then
+            # 指定了上游服务器: 用它替代公共源
+            cat << EOF
+# chrony.conf — 由 install-chrony.sh 生成 ($(date '+%Y-%m-%d %H:%M:%S'))
+# 上游 NTP 服务器
+$(printf 'server %s iburst\n' "${NTP_SERVERS[@]}")
+EOF
+        else
+            cat << EOF
 # chrony.conf — 由 install-chrony.sh 生成 ($(date '+%Y-%m-%d %H:%M:%S'))
 # 国内公共 NTP 源
 $(printf 'pool %s iburst\n' "${NTP_POOLS[@]}")
-# 内网隔离环境兜底: 无外网时本机作为本地时间源 (其他节点可指向本机)
+EOF
+        fi
+
+        cat << EOF
+# 内网隔离环境兜底: 无法联系上游时本机作为本地时间源
 local stratum 10
+EOF
+
+        # 允许内网网段从本机同步 (本机作为 NTP 服务器)
+        local net
+        for net in "${ALLOW_NETS[@]:-}"; do
+            [[ -n "$net" ]] && echo "allow $net"
+        done
+
+        cat << EOF
 
 driftfile /var/lib/chrony/chrony.drift
 makestep 1.0 3
 rtcsync
 logdir /var/log/chrony
 EOF
+    } > "$CHRONY_CONF"
 
-    log_info "NTP 源: ${NTP_POOLS[*]}"
+    if [[ ${#NTP_SERVERS[@]} -gt 0 ]]; then
+        log_info "上游 NTP 服务器: ${NTP_SERVERS[*]}"
+    else
+        log_info "NTP 源: ${NTP_POOLS[*]}"
+    fi
+    if [[ ${#ALLOW_NETS[@]} -gt 0 ]]; then
+        log_info "本机作为 NTP 服务器, 允许网段: ${ALLOW_NETS[*]}"
+        log_info "其他节点配置: pool <本机IP> iburst"
+    fi
     log_ok "chrony.conf 已生成"
+}
+
+# ============================ 配置系统时区 ============================
+configure_timezone() {
+    log_step "配置系统时区"
+
+    local current_tz
+    current_tz=$(timedatectl show -p Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo "未知")
+
+    if [[ "$current_tz" == "$TIMEZONE" ]]; then
+        log_ok "时区已是 ${TIMEZONE}"
+        return 0
+    fi
+
+    log_info "当前时区: ${current_tz} -> ${TIMEZONE}"
+    if timedatectl set-timezone "$TIMEZONE" 2>/dev/null; then
+        log_ok "时区已设置: ${TIMEZONE}"
+    else
+        # timedatectl 不可用时手动设置
+        ln -sf "/usr/share/zoneinfo/${TIMEZONE}" /etc/localtime
+        echo "$TIMEZONE" > /etc/timezone
+        log_ok "时区已设置 (手动): ${TIMEZONE}"
+    fi
 }
 
 # ============================ 启动并验证 ============================
@@ -221,11 +301,19 @@ main() {
         online)
             install_online
             configure_chrony
+            configure_timezone
             start_and_verify
             ;;
         offline)
             install_offline
             configure_chrony
+            configure_timezone
+            start_and_verify
+            ;;
+        config)
+            configure_chrony
+            # 仅显式指定 --timezone 时才改时区 (避免重配 allow 时重置时区)
+            [[ "$TZ_EXPLICIT" == true ]] && configure_timezone
             start_and_verify
             ;;
         uninstall)
